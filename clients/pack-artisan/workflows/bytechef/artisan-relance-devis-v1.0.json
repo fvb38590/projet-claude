@@ -1,0 +1,322 @@
+{
+  "definition": {
+    "tasks": [
+      {
+        "name": "initContext",
+        "label": "Init Context & Seuils",
+        "type": "script/v1/javascript",
+        "description": "Calcul des dates seuils pour relance (>7j) et expiration (>30j)",
+        "parameters": {
+          "script": "const now = new Date();\n\n// Seuil relance: devis envoye il y a plus de 7 jours\nconst seuilRelance = new Date(now);\nseuilRelance.setDate(seuilRelance.getDate() - 7);\n\n// Seuil expiration: devis envoye il y a plus de 30 jours\nconst seuilExpiration = new Date(now);\nseuilExpiration.setDate(seuilExpiration.getDate() - 30);\n\nconst workflowContext = {\n  workflowName: 'artisan-relance-devis-v1.0',\n  startTime: now.toISOString(),\n  trigger: 'schedule',\n  seuilRelance: seuilRelance.toISOString().split('T')[0],\n  seuilExpiration: seuilExpiration.toISOString().split('T')[0],\n  status: 'started'\n};\n\nconsole.log(JSON.stringify(workflowContext));\n\nreturn {\n  dateSeuilRelance: seuilRelance.toISOString(),\n  dateSeuilExpiration: seuilExpiration.toISOString(),\n  dateAujourdhui: now.toISOString(),\n  workflowContext: workflowContext\n};"
+        }
+      },
+      {
+        "name": "queryDevisNonSignes",
+        "label": "Query Devis Non Signes >7j",
+        "type": "notion/v1/queryDatabase",
+        "description": "Recuperer les devis avec statut 'Devis envoye' datant de plus de 7 jours, sans opposition prospection",
+        "parameters": {
+          "databaseId": "${env.NOTION_DB_DEVIS_ARTISAN}",
+          "filter": {
+            "and": [
+              {
+                "property": "Statut",
+                "status": {
+                  "equals": "Devis envoy\u00e9"
+                }
+              },
+              {
+                "property": "Opposition Prospection",
+                "checkbox": {
+                  "equals": false
+                }
+              },
+              {
+                "property": "Date Devis Envoy\u00e9",
+                "date": {
+                  "on_or_before": "${initContext.dateSeuilRelance}"
+                }
+              }
+            ]
+          }
+        },
+        "connection": "notion"
+      },
+      {
+        "name": "classifierDevis",
+        "label": "Classifier Devis (Relance vs Expiration)",
+        "type": "script/v1/javascript",
+        "description": "Classifier les devis en deux groupes: 'a relancer' (7-30j) et 'a expirer' (>30j). Extraire donnees et generer IDs RGPD.",
+        "parameters": {
+          "script": "const items = ${queryDevisNonSignes};\nconst seuilExpiration = new Date('${initContext.dateSeuilExpiration}');\n\nconst aRelancer = [];\nconst aExpirer = [];\nlet errors = [];\n\nif (!items || !Array.isArray(items.results)) {\n  console.log(JSON.stringify({ step: 'classifier', status: 'no_data', message: 'Aucun devis retourne par Notion' }));\n  return { aRelancer: [], aExpirer: [], summary: { total: 0, relances: 0, expirations: 0, errors: 0 } };\n}\n\nfor (const page of items.results) {\n  try {\n    const props = page.properties || {};\n\n    const email = props['Email'] && props['Email'].email ? props['Email'].email : '';\n    const client = props['Client'] && props['Client'].title && props['Client'].title[0]\n      ? props['Client'].title[0].plain_text : '';\n    const leadId = props['Lead ID'] && props['Lead ID'].rich_text && props['Lead ID'].rich_text[0]\n      ? props['Lead ID'].rich_text[0].plain_text : '';\n    const typeTravaux = props['Type Travaux'] && props['Type Travaux'].select\n      ? props['Type Travaux'].select.name : '';\n    const montant = props['Montant Devis'] && props['Montant Devis'].number\n      ? props['Montant Devis'].number : 0;\n    const dateDevisEnvoye = props['Date Devis Envoy\\u00e9'] && props['Date Devis Envoy\\u00e9'].date\n      ? props['Date Devis Envoy\\u00e9'].date.start : '';\n    const oppositionProspection = props['Opposition Prospection'] && props['Opposition Prospection'].checkbox\n      ? props['Opposition Prospection'].checkbox : false;\n\n    // Double-verification RGPD: ignorer si opposition ou pas d'email\n    if (!email || oppositionProspection) {\n      console.log(JSON.stringify({\n        step: 'classifier_skip',\n        reason: !email ? 'no_email' : 'opposition_prospection',\n        leadId: leadId,\n        timestamp: new Date().toISOString()\n      }));\n      continue;\n    }\n\n    const dateDevis = new Date(dateDevisEnvoye);\n    const rgpdTraceId = 'RELANCE-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);\n\n    // Masquage email pour logs\n    const maskedEmail = email.replace(/(.{2}).*(@.*)/, '$1***$2');\n\n    // Formatage date FR pour l'email\n    const dateDevisFR = dateDevis.toLocaleDateString('fr-FR', {\n      day: 'numeric',\n      month: 'long',\n      year: 'numeric',\n      timeZone: 'Europe/Paris'\n    });\n\n    // Formatage montant EUR\n    const montantFormate = new Intl.NumberFormat('fr-FR', {\n      style: 'currency',\n      currency: 'EUR'\n    }).format(montant);\n\n    const devisData = {\n      notionPageId: page.id,\n      leadId: leadId,\n      client: client,\n      email: email,\n      maskedEmail: maskedEmail,\n      typeTravaux: typeTravaux,\n      montant: montant,\n      montantFormate: montantFormate,\n      dateDevisEnvoye: dateDevisEnvoye,\n      dateDevisFR: dateDevisFR,\n      rgpdTraceId: rgpdTraceId\n    };\n\n    if (dateDevis <= seuilExpiration) {\n      devisData.action = 'expirer';\n      devisData.status = 'to_expire';\n      aExpirer.push(devisData);\n      console.log(JSON.stringify({ step: 'classified', action: 'expirer', maskedEmail: maskedEmail, leadId: leadId }));\n    } else {\n      devisData.action = 'relancer';\n      devisData.status = 'to_remind';\n      aRelancer.push(devisData);\n      console.log(JSON.stringify({ step: 'classified', action: 'relancer', maskedEmail: maskedEmail, leadId: leadId }));\n    }\n  } catch (err) {\n    errors.push({ pageId: page.id, error: err.message });\n    console.error(JSON.stringify({ step: 'classifier_error', pageId: page.id, error: err.message }));\n  }\n}\n\nconsole.log(JSON.stringify({\n  step: 'classification_complete',\n  totalItems: items.results.length,\n  aRelancer: aRelancer.length,\n  aExpirer: aExpirer.length,\n  errors: errors.length,\n  timestamp: new Date().toISOString()\n}));\n\nreturn {\n  aRelancer: aRelancer,\n  aExpirer: aExpirer,\n  summary: {\n    total: items.results.length,\n    relances: aRelancer.length,\n    expirations: aExpirer.length,\n    errors: errors.length\n  }\n};"
+        }
+      },
+      {
+        "name": "traitementRelances",
+        "label": "Traitement Relances (7-30j)",
+        "type": "flow-control/v1/try-catch",
+        "description": "Bloc try-catch pour le traitement des relances email",
+        "parameters": {
+          "try": [
+            {
+              "name": "conditionRelance",
+              "label": "Devis a relancer?",
+              "type": "flow-control/v1/condition",
+              "description": "Verifier s'il y a des devis a relancer",
+              "parameters": {
+                "condition": "${classifierDevis.summary.relances} > 0",
+                "true": [
+                  {
+                    "name": "boucleRelances",
+                    "label": "Pour chaque devis a relancer",
+                    "type": "flow-control/v1/each",
+                    "description": "Iterer sur les devis a relancer pour envoi email",
+                    "parameters": {
+                      "list": "${classifierDevis.aRelancer}",
+                      "tasks": [
+                        {
+                          "name": "sendRelanceEmail",
+                          "label": "Email Relance Devis",
+                          "type": "gmail/v1/sendEmail",
+                          "description": "Envoyer email de relance avec template professionnel et mentions RGPD",
+                          "parameters": {
+                            "to": "${each.email}",
+                            "subject": "Votre devis ${each.typeTravaux} - Avez-vous des questions ? - ${env.ARTISAN_NOM_ENTREPRISE}",
+                            "bodyType": "html",
+                            "body": "<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\"><title>Suivi de votre devis</title><style>body{margin:0;padding:0;font-family:Arial,Helvetica,sans-serif;color:#333333;line-height:1.6;background-color:#f4f4f4;}table{border-spacing:0;border-collapse:collapse;}.wrapper{width:100%;max-width:640px;margin:0 auto;background-color:#ffffff;}.header{background-color:#2563eb;color:#ffffff;padding:28px 32px;text-align:center;}.header h1{margin:0;font-size:22px;font-weight:700;letter-spacing:0.5px;}.content{padding:32px;}.greeting{font-size:16px;margin-bottom:16px;}.intro{font-size:15px;color:#555555;margin-bottom:24px;}.devis-box{background-color:#eff6ff;border-left:4px solid #2563eb;padding:20px 24px;margin:24px 0;border-radius:0 6px 6px 0;}.devis-box p{margin:6px 0;font-size:14px;color:#333333;}.devis-box strong{color:#1e40af;}.questions-title{font-size:15px;color:#333333;margin:24px 0 12px 0;}.questions-list{margin:0 0 24px 0;padding-left:20px;}.questions-list li{font-size:14px;color:#555555;margin-bottom:8px;line-height:1.5;}.cta-wrapper{text-align:center;margin:28px 0;}.cta-button{display:inline-block;background-color:#2563eb;color:#ffffff;text-decoration:none;padding:14px 32px;border-radius:6px;font-size:16px;font-weight:700;letter-spacing:0.3px;}.signature{font-size:14px;color:#555555;margin-top:28px;line-height:1.6;}.signature strong{color:#333333;}.footer{background-color:#f8f9fa;padding:24px 32px;border-top:1px solid #e5e7eb;}.footer-contact{font-size:13px;color:#666666;margin-bottom:16px;text-align:center;}.rgpd{font-size:11px;color:#999999;line-height:1.5;text-align:center;border-top:1px solid #e5e7eb;padding-top:16px;}.rgpd strong{color:#777777;}</style></head><body><div class=\"wrapper\"><div class=\"header\"><h1>Suivi de votre devis</h1></div><div class=\"content\"><p class=\"greeting\">Bonjour ${each.client},</p><p class=\"intro\">Nous vous avions transmis un devis r&#233;cemment et souhaitions prendre de vos nouvelles.</p><div class=\"devis-box\"><p><strong>R&#233;f&#233;rence :</strong> ${each.leadId}</p><p><strong>Type de travaux :</strong> ${each.typeTravaux}</p><p><strong>Montant :</strong> ${each.montantFormate}</p><p><strong>Devis envoy&#233; le :</strong> ${each.dateDevisFR}</p></div><p class=\"questions-title\">Avez-vous des questions sur notre proposition ? Nous sommes &#224; votre disposition pour :</p><ul class=\"questions-list\"><li>R&#233;pondre &#224; vos interrogations techniques</li><li>Adapter le devis si vos besoins ont &#233;volu&#233;</li><li>Planifier l&#8217;intervention &#224; votre convenance</li><li>Discuter des modalit&#233;s de r&#233;alisation</li></ul><div class=\"cta-wrapper\"><a href=\"tel:${env.ARTISAN_TELEPHONE}\" class=\"cta-button\">Nous appeler</a></div><div class=\"signature\"><p>Cordialement,<br><strong>${env.ARTISAN_NOM_ENTREPRISE}</strong><br>${env.ARTISAN_TELEPHONE}<br>${env.ARTISAN_EMAIL}</p></div></div><div class=\"footer\"><p class=\"footer-contact\">Vous pouvez &#233;galement r&#233;pondre directement &#224; cet email.</p><p class=\"rgpd\"><strong>RGPD</strong> : Cette relance est envoy&#233;e dans le cadre de votre demande de devis (int&#233;r&#234;t l&#233;gitime, Art. 6.1.f du RGPD). Vos donn&#233;es sont trait&#233;es uniquement pour le suivi de votre demande et conserv&#233;es 3 ans maximum.<br>Pour ne plus recevoir de relances, r&#233;pondez &laquo; STOP &raquo; &#224; cet email ou contactez <a href=\"mailto:${env.ARTISAN_EMAIL_RGPD}\" style=\"color:#999999;\">${env.ARTISAN_EMAIL_RGPD}</a>.<br>Droits d&#8217;acc&#232;s, rectification, suppression : <a href=\"mailto:${env.ARTISAN_EMAIL_RGPD}\" style=\"color:#999999;\">${env.ARTISAN_EMAIL_RGPD}</a><br>ID tra&#231;abilit&#233; : ${each.rgpdTraceId}</p></div></div></body></html>",
+                            "replyTo": "${env.ARTISAN_EMAIL}"
+                          },
+                          "connection": "gmail"
+                        },
+                        {
+                          "name": "logRelanceSuccess",
+                          "label": "Log Relance Envoyee",
+                          "type": "script/v1/javascript",
+                          "description": "Logger le succes de l'envoi de relance avec email masque (RGPD)",
+                          "parameters": {
+                            "script": "const maskedEmail = '${each.email}'.replace(/(.{2}).*(@.*)/, '$1***$2');\n\nconst log = {\n  step: 'relance_sent',\n  status: 'success',\n  rgpdTraceId: '${each.rgpdTraceId}',\n  clientEmail: maskedEmail,\n  leadId: '${each.leadId}',\n  typeTravaux: '${each.typeTravaux}',\n  timestamp: new Date().toISOString()\n};\n\nconsole.log(JSON.stringify(log));\nreturn log;"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ],
+                "false": [
+                  {
+                    "name": "logNoRelance",
+                    "label": "Log Aucune Relance",
+                    "type": "script/v1/javascript",
+                    "description": "Logger qu'il n'y a aucun devis a relancer",
+                    "parameters": {
+                      "script": "const log = {\n  step: 'no_relance',\n  status: 'completed',\n  message: 'Aucun devis a relancer (7-30 jours)',\n  timestamp: new Date().toISOString()\n};\n\nconsole.log(JSON.stringify(log));\nreturn log;"
+                    }
+                  }
+                ]
+              }
+            }
+          ],
+          "catch": [
+            {
+              "name": "errorHandlerRelance",
+              "label": "Error Handler Relances",
+              "type": "script/v1/javascript",
+              "description": "Gestion erreur bloc relances",
+              "parameters": {
+                "script": "const errorLog = {\n  step: 'error_handler_relance',\n  status: 'error',\n  errorCode: error.name || 'RELANCE_ERROR',\n  errorMessage: error.message || 'Erreur inconnue lors du traitement des relances',\n  timestamp: new Date().toISOString(),\n  workflowName: 'artisan-relance-devis-v1.0',\n  severity: 'high'\n};\n\nconsole.error(JSON.stringify(errorLog));\nreturn errorLog;"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "name": "traitementExpirations",
+        "label": "Traitement Expirations (>30j)",
+        "type": "flow-control/v1/try-catch",
+        "description": "Bloc try-catch pour le traitement des expirations de devis",
+        "parameters": {
+          "try": [
+            {
+              "name": "conditionExpiration",
+              "label": "Devis a expirer?",
+              "type": "flow-control/v1/condition",
+              "description": "Verifier s'il y a des devis a expirer",
+              "parameters": {
+                "condition": "${classifierDevis.summary.expirations} > 0",
+                "true": [
+                  {
+                    "name": "boucleExpirations",
+                    "label": "Pour chaque devis a expirer",
+                    "type": "flow-control/v1/each",
+                    "description": "Iterer sur les devis a expirer pour mise a jour Notion",
+                    "parameters": {
+                      "list": "${classifierDevis.aExpirer}",
+                      "tasks": [
+                        {
+                          "name": "notionExpireDevis",
+                          "label": "Marquer Devis Expire dans Notion",
+                          "type": "notion/v1/updateDatabaseItem",
+                          "description": "Mettre a jour le statut du devis a 'Expire' dans Notion",
+                          "parameters": {
+                            "pageId": "${each.notionPageId}",
+                            "properties": {
+                              "Statut": {
+                                "status": {
+                                  "name": "Expir\u00e9"
+                                }
+                              }
+                            }
+                          },
+                          "connection": "notion"
+                        },
+                        {
+                          "name": "logExpiration",
+                          "label": "Log Expiration Devis",
+                          "type": "script/v1/javascript",
+                          "description": "Logger l'expiration du devis avec email masque (RGPD)",
+                          "parameters": {
+                            "script": "const maskedEmail = '${each.email}'.replace(/(.{2}).*(@.*)/, '$1***$2');\n\nconst log = {\n  step: 'devis_expired',\n  status: 'success',\n  leadId: '${each.leadId}',\n  clientEmail: maskedEmail,\n  notionPageId: '${each.notionPageId}',\n  action: 'marked_as_expired',\n  dateDevisOriginal: '${each.dateDevisEnvoye}',\n  timestamp: new Date().toISOString()\n};\n\nconsole.log(JSON.stringify(log));\nreturn log;"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ],
+                "false": [
+                  {
+                    "name": "logNoExpiration",
+                    "label": "Log Aucune Expiration",
+                    "type": "script/v1/javascript",
+                    "description": "Logger qu'il n'y a aucun devis a expirer",
+                    "parameters": {
+                      "script": "const log = {\n  step: 'no_expiration',\n  status: 'completed',\n  message: 'Aucun devis a expirer (>30 jours)',\n  timestamp: new Date().toISOString()\n};\n\nconsole.log(JSON.stringify(log));\nreturn log;"
+                    }
+                  }
+                ]
+              }
+            }
+          ],
+          "catch": [
+            {
+              "name": "errorHandlerExpiration",
+              "label": "Error Handler Expirations",
+              "type": "script/v1/javascript",
+              "description": "Gestion erreur bloc expirations",
+              "parameters": {
+                "script": "const errorLog = {\n  step: 'error_handler_expiration',\n  status: 'error',\n  errorCode: error.name || 'EXPIRATION_ERROR',\n  errorMessage: error.message || 'Erreur inconnue lors du traitement des expirations',\n  timestamp: new Date().toISOString(),\n  workflowName: 'artisan-relance-devis-v1.0',\n  severity: 'medium'\n};\n\nconsole.error(JSON.stringify(errorLog));\nreturn errorLog;"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "name": "recapitulatifFinal",
+        "label": "Recapitulatif Final",
+        "type": "script/v1/javascript",
+        "description": "Resume d'execution: relances envoyees, devis expires, erreurs rencontrees",
+        "parameters": {
+          "script": "const classifSummary = ${classifierDevis.summary};\n\nconst summary = {\n  step: 'workflow_completed',\n  status: 'success',\n  workflowName: 'artisan-relance-devis-v1.0',\n  results: {\n    totalDevisTraites: classifSummary.total || 0,\n    relancesEnvoyees: classifSummary.relances || 0,\n    devisExpires: classifSummary.expirations || 0,\n    erreurs: classifSummary.errors || 0\n  },\n  thresholds: {\n    relanceApres: '7 jours',\n    expirationApres: '30 jours'\n  },\n  rgpd: {\n    oppositionsRespectees: true,\n    emailsMasquesDansLogs: true,\n    traceIdsGeneres: true,\n    baseLegale: 'Interet legitime (Art. 6.1.f RGPD)',\n    finalite: 'Relance commerciale devis artisan'\n  },\n  timing: {\n    startTime: '${initContext.workflowContext.startTime}',\n    endTime: new Date().toISOString()\n  }\n};\n\nconsole.log(JSON.stringify(summary));\nreturn summary;"
+        }
+      }
+    ],
+    "triggers": [
+      {
+        "name": "scheduleTrigger",
+        "label": "Declenchement Quotidien 9h",
+        "type": "schedule/v1/trigger",
+        "description": "Declenchement quotidien a 9h00 pour relance des devis non signes",
+        "parameters": {
+          "cron": "0 0 9 * * *",
+          "timezone": "Europe/Paris"
+        }
+      }
+    ]
+  },
+  "label": "artisan-relance-devis-v1.0",
+  "description": "Relance automatique des devis non sign\u00e9s (>7j) et expiration (>30j)",
+  "version": 1,
+  "tags": [
+    "artisan",
+    "relance",
+    "devis",
+    "production",
+    "bytechef"
+  ],
+  "_documentation": {
+    "description": "Workflow ByteChef de relance automatique des devis non sign\u00e9s pour artisans du b\u00e2timent. D\u00e9clenchement quotidien \u00e0 9h. Les devis non sign\u00e9s depuis 7-30 jours re\u00e7oivent un email de relance. Les devis non sign\u00e9s depuis plus de 30 jours sont marqu\u00e9s 'Expir\u00e9' dans Notion.",
+    "version": "1.0.0",
+    "author": "Vazbolota Consulting",
+    "platform": "ByteChef",
+    "equivalentN8n": "workflows/n8n/artisan-relance-devis-v1.0.json",
+    "taskSequence": [
+      "1. scheduleTrigger: D\u00e9clenchement quotidien 9h (cron Europe/Paris)",
+      "2. initContext: Calcul seuils - relance (>7j) et expiration (>30j)",
+      "3. queryDevisNonSignes: Notion queryDatabase - statut='Devis envoy\u00e9', opposition=false, date < seuil",
+      "4. classifierDevis: Script JS - trier en '\u00e0 relancer' (7-30j) et '\u00e0 expirer' (>30j)",
+      "5. traitementRelances: Try-catch - condition + boucle Gmail sendEmail + log",
+      "6. traitementExpirations: Try-catch - condition + boucle Notion update + log",
+      "7. recapitulatifFinal: R\u00e9sum\u00e9 (relances, expirations, erreurs)"
+    ],
+    "connections": {
+      "notion": {
+        "description": "Connexion Notion API pour lecture/\u00e9criture base Devis & Leads",
+        "credentialType": "notion_api_key"
+      },
+      "gmail": {
+        "description": "Connexion Gmail OAuth2 pour envoi des relances",
+        "credentialType": "gmail_oauth2"
+      }
+    },
+    "environmentVariables": {
+      "NOTION_DB_DEVIS_ARTISAN": "ID de la base Notion 'Devis & Leads'",
+      "ARTISAN_NOM_ENTREPRISE": "Nom de l'entreprise artisan",
+      "ARTISAN_TELEPHONE": "T\u00e9l\u00e9phone de l'artisan (format international +33...)",
+      "ARTISAN_EMAIL": "Email professionnel de l'artisan",
+      "ARTISAN_EMAIL_RGPD": "Email contact RGPD / droits des personnes"
+    },
+    "rgpd": {
+      "finalite": "Relance commerciale devis - int\u00e9r\u00eat l\u00e9gitime avec droit d'opposition",
+      "baseLegale": "Int\u00e9r\u00eat l\u00e9gitime (Art. 6.1.f RGPD)",
+      "donneesTraitees": [
+        "Nom (Client)",
+        "Email",
+        "Lead ID",
+        "Type travaux",
+        "Montant devis",
+        "Date devis envoy\u00e9"
+      ],
+      "destinataires": [
+        "Notion (lecture/\u00e9criture)",
+        "Gmail (envoi relances)"
+      ],
+      "conservation": "Logs: 1 an / Donn\u00e9es devis: 3 ans",
+      "securite": [
+        "HTTPS obligatoire",
+        "OAuth2 pour Gmail",
+        "Emails masqu\u00e9s dans les logs",
+        "Opposition prospection respect\u00e9e (filtre Notion + double-v\u00e9rification JS)",
+        "ID tra\u00e7abilit\u00e9 RGPD unique par envoi",
+        "Footer RGPD avec lien d\u00e9sinscription dans chaque email",
+        "Credentials en variables d'environnement"
+      ],
+      "droitsPersonnes": {
+        "acces": "Via email ARTISAN_EMAIL_RGPD",
+        "rectification": "Via email ARTISAN_EMAIL_RGPD",
+        "suppression": "Via email ARTISAN_EMAIL_RGPD",
+        "opposition": "Champ 'Opposition Prospection' dans Notion + r\u00e9ponse STOP"
+      }
+    },
+    "notionSchema": {
+      "database": "Devis & Leads",
+      "propertiesUsed": {
+        "Statut": "status - filtre 'Devis envoy\u00e9', mise \u00e0 jour 'Expir\u00e9'",
+        "Opposition Prospection": "checkbox - filtre false (RGPD)",
+        "Date Devis Envoy\u00e9": "date - comparaison seuils 7j/30j",
+        "Email": "email - destinataire relance",
+        "Client": "title - nom dans l'email",
+        "Lead ID": "rich_text - r\u00e9f\u00e9rence devis",
+        "Type Travaux": "select - contexte dans l'email",
+        "Montant Devis": "number - montant affich\u00e9 dans l'email"
+      }
+    }
+  }
+}

@@ -1,0 +1,126 @@
+{
+  "definition": {
+    "tasks": [
+      {
+        "name": "tryCatchWrapper",
+        "type": "flow-control/v1/try-catch",
+        "parameters": {
+          "tryTasks": [
+            {
+              "name": "initContext",
+              "type": "script/v1/javascript",
+              "parameters": {
+                "script": "// ============================================================\n// Etape 1 : Calcul des dates J+1 pour Google Calendar API\n// Finalite RGPD : Rappel d'intervention planifiee (base legale = contrat)\n// ============================================================\n\nconst now = new Date();\nconst tomorrow = new Date(now);\ntomorrow.setDate(tomorrow.getDate() + 1);\n\n// Fenetre horaire complete du lendemain (00:00 -> 23:59:59)\nconst tomorrowStart = new Date(tomorrow);\ntomorrowStart.setHours(0, 0, 0, 0);\n\nconst tomorrowEnd = new Date(tomorrow);\ntomorrowEnd.setHours(23, 59, 59, 999);\n\nconst timeMin = tomorrowStart.toISOString();\nconst timeMax = tomorrowEnd.toISOString();\n\n// Date formatee FR pour affichage\nconst dateFr = tomorrowStart.toLocaleDateString('fr-FR', {\n  weekday: 'long',\n  day: 'numeric',\n  month: 'long',\n  year: 'numeric',\n  timeZone: 'Europe/Paris'\n});\n\n// Contexte workflow pour logging\nconst workflowContext = {\n  workflowName: 'artisan-rappel-intervention-v1.0',\n  startTime: now.toISOString(),\n  trigger: 'schedule',\n  targetDate: tomorrowStart.toISOString().split('T')[0]\n};\n\nconsole.log(JSON.stringify({\n  step: 'initContext',\n  status: 'success',\n  targetDate: workflowContext.targetDate,\n  timestamp: now.toISOString()\n}));\n\nreturn {\n  timeMin: timeMin,\n  timeMax: timeMax,\n  dateFr: dateFr,\n  targetDate: workflowContext.targetDate,\n  workflowContext: workflowContext\n};"
+              }
+            },
+            {
+              "name": "recupererEvenements",
+              "type": "google-calendar/v1/listEvents",
+              "parameters": {
+                "calendarId": "primary",
+                "timeMin": "${initContext.timeMin}",
+                "timeMax": "${initContext.timeMax}",
+                "singleEvents": true,
+                "orderBy": "startTime"
+              }
+            },
+            {
+              "name": "extraireDetails",
+              "type": "script/v1/javascript",
+              "parameters": {
+                "script": "// ============================================================\n// Etape 3 : Filtrer evenements avec participants + extraire details\n// RGPD : Generation ID tracabilite, minimisation des donnees\n// ============================================================\n\nconst events = recupererEvenements.items || [];\nconst interventions = [];\n\nfor (const event of events) {\n  const attendees = event.attendees || [];\n\n  for (const attendee of attendees) {\n    // Ignorer l'organisateur (l'artisan lui-meme)\n    if (attendee.organizer === true) continue;\n    if (attendee.self === true) continue;\n\n    // Validation email obligatoire (RGPD : pas de traitement sans identifiant)\n    if (!attendee.email) {\n      console.log(JSON.stringify({\n        step: 'extraireDetails',\n        status: 'warning',\n        message: 'Participant sans email ignore (RGPD)',\n        eventId: event.id,\n        timestamp: new Date().toISOString()\n      }));\n      continue;\n    }\n\n    // Formatage date/heure FR\n    const startDateTime = new Date(event.start.dateTime || event.start.date);\n    const heureIntervention = startDateTime.toLocaleTimeString('fr-FR', {\n      hour: '2-digit',\n      minute: '2-digit',\n      timeZone: 'Europe/Paris'\n    });\n\n    // Generation ID tracable RGPD unique par envoi\n    const rgpdTraceId = 'RAPPEL-INTERV-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);\n\n    interventions.push({\n      eventId: event.id,\n      titre: event.summary || 'Intervention',\n      adresse: event.location || 'Adresse a confirmer',\n      description: event.description || '',\n      dateIntervention: initContext.dateFr,\n      heureIntervention: heureIntervention,\n      clientEmail: attendee.email,\n      clientNom: attendee.displayName || attendee.email.split('@')[0],\n      rgpdTraceId: rgpdTraceId\n    });\n  }\n}\n\n// Gestion cas aucun resultat\nif (interventions.length === 0) {\n  console.log(JSON.stringify({\n    step: 'extraireDetails',\n    status: 'success',\n    message: 'Aucune intervention trouvee pour demain',\n    targetDate: initContext.targetDate,\n    timestamp: new Date().toISOString()\n  }));\n\n  return {\n    hasInterventions: false,\n    interventions: [],\n    totalInterventions: 0,\n    message: 'Aucune intervention prevue pour ' + initContext.dateFr\n  };\n}\n\nconsole.log(JSON.stringify({\n  step: 'extraireDetails',\n  status: 'success',\n  interventionsFound: interventions.length,\n  targetDate: initContext.targetDate,\n  timestamp: new Date().toISOString()\n}));\n\nreturn {\n  hasInterventions: true,\n  interventions: interventions,\n  totalInterventions: interventions.length,\n  message: interventions.length + ' intervention(s) trouvee(s) pour ' + initContext.dateFr\n};"
+              }
+            },
+            {
+              "name": "verifierInterventions",
+              "type": "flow-control/v1/condition",
+              "parameters": {
+                "condition": "${extraireDetails.hasInterventions} == true",
+                "trueTasks": [
+                  {
+                    "name": "envoyerRappelsLoop",
+                    "type": "flow-control/v1/each",
+                    "parameters": {
+                      "list": "${extraireDetails.interventions}",
+                      "iteratee": [
+                        {
+                          "name": "envoyerRappelEmail",
+                          "type": "gmail/v1/sendEmail",
+                          "parameters": {
+                            "to": "${each.clientEmail}",
+                            "subject": "Rappel : Intervention prevue demain - ${each.titre}",
+                            "bodyContentType": "HTML",
+                            "body": "<!DOCTYPE html><html lang=\"fr\"><head><meta charset=\"UTF-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\"><title>Rappel Intervention</title></head><body style=\"margin:0;padding:0;font-family:Georgia,serif;color:#333;line-height:1.6;background-color:#f4f4f4;\"><table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" border=\"0\" style=\"background-color:#f4f4f4;\"><tr><td align=\"center\" style=\"padding:20px 0;\"><table role=\"presentation\" width=\"600\" cellspacing=\"0\" cellpadding=\"0\" border=\"0\" style=\"background-color:#ffffff;border-radius:8px;overflow:hidden;\"><tr><td style=\"background-color:#f59e0b;color:#ffffff;padding:25px 30px;text-align:center;\"><h1 style=\"margin:0;font-size:22px;font-weight:bold;\">Rappel d'Intervention</h1><p style=\"margin:8px 0 0;font-size:14px;opacity:0.9;\">Votre intervention est prevue pour demain</p></td></tr><tr><td style=\"padding:30px;\"><p style=\"margin:0 0 15px;\">Bonjour <strong>${each.clientNom}</strong>,</p><p style=\"margin:0 0 20px;\">Nous vous rappelons qu'une intervention est programmee <strong>demain</strong> a votre adresse. Voici les details :</p><table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" border=\"0\" style=\"background-color:#fffbeb;border-left:4px solid #f59e0b;border-radius:4px;margin:20px 0;\"><tr><td style=\"padding:20px;\"><p style=\"margin:0 0 10px;font-size:16px;font-weight:bold;color:#92400e;\">${each.titre}</p><table role=\"presentation\" cellspacing=\"0\" cellpadding=\"4\" border=\"0\"><tr><td style=\"padding:4px 12px 4px 0;font-weight:bold;color:#666;vertical-align:top;\">Date :</td><td style=\"padding:4px 0;\">${each.dateIntervention}</td></tr><tr><td style=\"padding:4px 12px 4px 0;font-weight:bold;color:#666;vertical-align:top;\">Heure :</td><td style=\"padding:4px 0;\">${each.heureIntervention}</td></tr><tr><td style=\"padding:4px 12px 4px 0;font-weight:bold;color:#666;vertical-align:top;\">Adresse :</td><td style=\"padding:4px 0;\">${each.adresse}</td></tr></table></td></tr></table><div style=\"background-color:#f0fdf4;border:1px solid #bbf7d0;border-radius:4px;padding:15px 20px;margin:20px 0;\"><p style=\"margin:0 0 10px;font-weight:bold;color:#166534;\">Checklist de preparation :</p><ul style=\"margin:0;padding-left:20px;color:#333;\"><li style=\"margin-bottom:6px;\">Verifier que l'acces au lieu d'intervention est possible</li><li style=\"margin-bottom:6px;\">Preparer les documents ou informations necessaires</li><li style=\"margin-bottom:6px;\">Prevoir un moyen de contact en cas de retard ou imprévu</li><li style=\"margin-bottom:6px;\">Securiser les animaux de compagnie si necessaire</li></ul></div><p style=\"margin:20px 0 10px;\">En cas d'empechement ou pour toute modification, merci de nous prevenir dans les meilleurs delais.</p><p style=\"margin:10px 0 0;\">Cordialement,<br><strong>Votre artisan</strong></p></td></tr><tr><td style=\"padding:20px 30px;background-color:#f9fafb;border-top:1px solid #e5e7eb;\"><p style=\"margin:0 0 8px;font-size:12px;color:#6b7280;\"><strong>RGPD - Protection des donnees</strong></p><p style=\"margin:0;font-size:11px;color:#9ca3af;\">Ce message est un rappel automatique lie a votre rendez-vous d'intervention. Vos donnees personnelles (nom, email) sont traitees uniquement dans le cadre de cette prestation (base legale : execution du contrat). Elles ne sont ni partagees ni utilisees a des fins commerciales. Pour exercer vos droits (acces, rectification, suppression), contactez-nous directement en reponse a cet email.</p><p style=\"margin:8px 0 0;font-size:10px;color:#d1d5db;\">ID de tracabilite : ${each.rgpdTraceId}</p></td></tr></table></td></tr></table></body></html>"
+                          }
+                        },
+                        {
+                          "name": "logEnvoiRappel",
+                          "type": "script/v1/javascript",
+                          "parameters": {
+                            "script": "// ============================================================\n// Etape 6 : Log RGPD-compliant apres envoi email\n// Email masque pour conformite RGPD dans les logs\n// ============================================================\n\nconst email = each.clientEmail || '';\nconst maskedEmail = email.replace(/(.{2}).*(@.*)/, '$1***$2');\n\nconst log = {\n  step: 'envoyerRappelEmail',\n  status: 'success',\n  rgpdTraceId: each.rgpdTraceId,\n  clientEmail: maskedEmail,\n  eventId: each.eventId,\n  titre: each.titre,\n  dateIntervention: each.dateIntervention,\n  timestamp: new Date().toISOString()\n};\n\nconsole.log(JSON.stringify(log));\n\nreturn log;"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ],
+                "falseTasks": [
+                  {
+                    "name": "logAucuneIntervention",
+                    "type": "script/v1/javascript",
+                    "parameters": {
+                      "script": "// ============================================================\n// Aucune intervention trouvee pour demain\n// ============================================================\n\nconst log = {\n  step: 'verifierInterventions',\n  status: 'success',\n  message: extraireDetails.message,\n  targetDate: initContext.targetDate,\n  totalInterventions: 0,\n  timestamp: new Date().toISOString()\n};\n\nconsole.log(JSON.stringify(log));\n\nreturn log;"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "name": "recapitulatif",
+              "type": "script/v1/javascript",
+              "parameters": {
+                "script": "// ============================================================\n// Etape finale : Recapitulatif d'execution du workflow\n// ============================================================\n\nconst endTime = new Date();\nconst startTime = new Date(initContext.workflowContext.startTime);\nconst durationMs = endTime.getTime() - startTime.getTime();\n\nconst summary = {\n  step: 'workflow_completed',\n  status: 'success',\n  workflowName: initContext.workflowContext.workflowName,\n  targetDate: initContext.targetDate,\n  dateFr: initContext.dateFr,\n  totalInterventions: extraireDetails.totalInterventions,\n  hasInterventions: extraireDetails.hasInterventions,\n  message: extraireDetails.message,\n  durationMs: durationMs,\n  startTime: initContext.workflowContext.startTime,\n  endTime: endTime.toISOString(),\n  timestamp: endTime.toISOString()\n};\n\nconsole.log(JSON.stringify(summary));\n\nreturn summary;"
+              }
+            }
+          ],
+          "catchTasks": [
+            {
+              "name": "gestionErreur",
+              "type": "script/v1/javascript",
+              "parameters": {
+                "script": "// ============================================================\n// Gestionnaire d'erreurs global\n// RGPD : Aucune donnee personnelle dans les logs d'erreur\n// ============================================================\n\nconst errorLog = {\n  step: 'error_handler',\n  status: 'error',\n  errorCode: error.name || 'UNKNOWN_ERROR',\n  errorMessage: error.message || 'Erreur inconnue dans le workflow',\n  errorType: error.constructor ? error.constructor.name : 'Error',\n  workflowName: 'artisan-rappel-intervention-v1.0',\n  timestamp: new Date().toISOString(),\n  severity: 'high',\n  action: 'Verifier les credentials Google Calendar/Gmail et la configuration du workflow'\n};\n\nconsole.error(JSON.stringify(errorLog));\n\nreturn errorLog;"
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "triggers": [
+      {
+        "name": "declenchementQuotidien",
+        "type": "schedule/v1/trigger",
+        "parameters": {
+          "cron": "0 0 8 * * *",
+          "timezone": "Europe/Paris",
+          "description": "Declenchement quotidien a 8h00 (heure de Paris) pour rappels J-1"
+        }
+      }
+    ]
+  },
+  "label": "artisan-rappel-intervention-v1.0",
+  "description": "Rappel automatique J-1 des interventions artisan. Recupere les evenements Google Calendar du lendemain, filtre ceux avec participants (clients), et envoie un email de rappel professionnel avec details de l'intervention, checklist de preparation, et mentions RGPD obligatoires.",
+  "version": 1,
+  "metadata": {
+    "author": "Vazbolota Consulting",
+    "createdAt": "2026-02-04",
+    "platform": "bytechef",
+    "rgpd": {
+      "baseLegale": "Execution du contrat (Art. 6.1.b RGPD)",
+      "finalite": "Rappel automatique d'intervention planifiee",
+      "donneesTraitees": ["nom", "email", "titre intervention", "adresse", "horaire"],
+      "dureeConservation": "Logs techniques : 1 an",
+      "tracabilite": "ID unique genere par envoi (RAPPEL-INTERV-*)"
+    },
+    "tags": ["artisan", "rappel", "intervention", "j-1", "google-calendar", "gmail", "rgpd"]
+  }
+}

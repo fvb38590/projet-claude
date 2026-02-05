@@ -1,0 +1,343 @@
+{
+  "name": "artisan-planning-intervention-v1.0",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "artisan-planning-intervention",
+        "options": {
+          "responseMode": "responseNode"
+        }
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Planification",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "artisan-planning-intervention"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validation et préparation planification intervention - Pack Artisan\nconst input = $input.first().json;\n\n// Créneaux horaires artisan (8h-18h, pas de pause midi imposée)\nconst HEURE_MIN = 8;\nconst HEURE_MAX = 18;\nconst DUREES_VALIDES = [1, 2, 3, 4]; // heures\n\n// 1. Vérification consentement RGPD\nif (!input.consentement_rgpd || input.consentement_rgpd !== true) {\n  return [{\n    json: {\n      valid: false,\n      error_code: 'RGPD_NO_CONSENT',\n      error_message: 'Consentement RGPD requis pour la planification',\n      timestamp: new Date().toISOString()\n    }\n  }];\n}\n\n// 2. Validation email\nconst emailRegex = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;\nif (!input.email || !emailRegex.test(input.email)) {\n  return [{\n    json: {\n      valid: false,\n      error_code: 'VALIDATION_EMAIL_INVALID',\n      error_message: 'Format email invalide',\n      timestamp: new Date().toISOString()\n    }\n  }];\n}\n\n// 3. Validation champs obligatoires\nconst requiredFields = ['nom', 'prenom', 'email', 'telephone', 'date_intervention', 'heure_debut', 'duree_heures', 'adresse_chantier', 'type_travaux'];\nfor (const field of requiredFields) {\n  if (!input[field] || input[field].toString().trim() === '') {\n    return [{\n      json: {\n        valid: false,\n        error_code: 'VALIDATION_MISSING_FIELD',\n        error_message: `Champ obligatoire manquant: ${field}`,\n        timestamp: new Date().toISOString()\n      }\n    }];\n  }\n}\n\n// 4. Validation heure (format HH:MM, entre 8h et 18h)\nconst heureMatch = input.heure_debut.toString().trim().match(/^(\\d{1,2}):(\\d{2})$/);\nif (!heureMatch) {\n  return [{\n    json: {\n      valid: false,\n      error_code: 'VALIDATION_HEURE_INVALID',\n      error_message: 'Format heure invalide (attendu: HH:MM)',\n      timestamp: new Date().toISOString()\n    }\n  }];\n}\nconst heure = parseInt(heureMatch[1]);\nif (heure < HEURE_MIN || heure >= HEURE_MAX) {\n  return [{\n    json: {\n      valid: false,\n      error_code: 'VALIDATION_HEURE_HORS_PLAGE',\n      error_message: `Intervention possible entre ${HEURE_MIN}h et ${HEURE_MAX}h uniquement`,\n      timestamp: new Date().toISOString()\n    }\n  }];\n}\n\n// 5. Validation durée\nconst duree = parseInt(input.duree_heures);\nif (!DUREES_VALIDES.includes(duree)) {\n  return [{\n    json: {\n      valid: false,\n      error_code: 'VALIDATION_DUREE_INVALID',\n      error_message: `Durée invalide. Valeurs acceptées: ${DUREES_VALIDES.join(', ')} heures`,\n      timestamp: new Date().toISOString()\n    }\n  }];\n}\n\n// Vérifier que intervention ne dépasse pas 18h\nif (heure + duree > HEURE_MAX) {\n  return [{\n    json: {\n      valid: false,\n      error_code: 'VALIDATION_DEBORDEMENT_HORAIRE',\n      error_message: `Intervention de ${duree}h à partir de ${heure}h dépasserait ${HEURE_MAX}h`,\n      timestamp: new Date().toISOString()\n    }\n  }];\n}\n\n// 6. Validation date (pas passée, pas dimanche, max 90 jours)\nconst dateIntervention = new Date(input.date_intervention);\nconst aujourdhui = new Date();\naujourdhui.setHours(0, 0, 0, 0);\n\nif (isNaN(dateIntervention.getTime())) {\n  return [{\n    json: {\n      valid: false,\n      error_code: 'VALIDATION_DATE_INVALID',\n      error_message: 'Format de date invalide (attendu: YYYY-MM-DD)',\n      timestamp: new Date().toISOString()\n    }\n  }];\n}\n\nif (dateIntervention < aujourdhui) {\n  return [{\n    json: {\n      valid: false,\n      error_code: 'VALIDATION_DATE_PAST',\n      error_message: 'Impossible de planifier dans le passé',\n      timestamp: new Date().toISOString()\n    }\n  }];\n}\n\n// Dimanche interdit (0 = dimanche), samedi OK pour artisans\nif (dateIntervention.getDay() === 0) {\n  return [{\n    json: {\n      valid: false,\n      error_code: 'VALIDATION_DATE_DIMANCHE',\n      error_message: 'Pas d\\'intervention le dimanche',\n      timestamp: new Date().toISOString()\n    }\n  }];\n}\n\nconst maxDate = new Date();\nmaxDate.setDate(maxDate.getDate() + 90);\nif (dateIntervention > maxDate) {\n  return [{\n    json: {\n      valid: false,\n      error_code: 'VALIDATION_DATE_TOO_FAR',\n      error_message: 'Planification possible jusqu\\'à 90 jours à l\\'avance',\n      timestamp: new Date().toISOString()\n    }\n  }];\n}\n\n// 7. Sanitization\nconst sanitize = (str) => {\n  if (!str) return '';\n  return str.toString().trim().replace(/<[^>]*>/g, '').replace(/[<>\"'&]/g, '');\n};\n\n// 8. Construire datetime pour Google Calendar\nconst [heures, minutes] = input.heure_debut.split(':').map(Number);\nconst dateDebut = new Date(dateIntervention);\ndateDebut.setHours(heures, minutes, 0, 0);\nconst dateFin = new Date(dateDebut);\ndateFin.setHours(dateFin.getHours() + duree);\n\n// 9. Générer IDs\nconst intervId = `INTERV-${Date.now()}-${Math.random().toString(36).substr(2, 9).toUpperCase()}`;\n\n// 10. Formatage date FR\nconst dateInterventionFR = dateIntervention.toLocaleDateString('fr-FR', {\n  weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',\n  timeZone: 'Europe/Paris'\n});\n\nreturn [{\n  json: {\n    valid: true,\n    intervention_id: intervId,\n    \n    // Données client\n    nom: sanitize(input.nom).toUpperCase(),\n    prenom: sanitize(input.prenom),\n    email: sanitize(input.email).toLowerCase(),\n    telephone: sanitize(input.telephone),\n    \n    // Données intervention\n    adresse_chantier: sanitize(input.adresse_chantier),\n    type_travaux: sanitize(input.type_travaux).toLowerCase(),\n    description: sanitize(input.description || '').substring(0, 500),\n    duree_heures: duree,\n    devis_lie: sanitize(input.devis_lie || ''),\n    \n    // Calendar\n    date_intervention: input.date_intervention,\n    heure_debut: input.heure_debut,\n    calendar_start: dateDebut.toISOString(),\n    calendar_end: dateFin.toISOString(),\n    \n    // Affichage\n    date_intervention_fr: dateInterventionFR,\n    heure_intervention: input.heure_debut,\n    \n    // RGPD\n    consentement_rgpd: true,\n    date_consentement: new Date().toISOString(),\n    rgpd_trace_id: intervId,\n    \n    workflow_context: {\n      workflow_name: 'artisan-planning-intervention-v1.0',\n      execution_id: $execution.id,\n      processed_at: new Date().toISOString()\n    }\n  }\n}];"
+      },
+      "id": "code-validation",
+      "name": "Validation Demande",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "condition-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-valid",
+      "name": "Demande Valide?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "resource": "event",
+        "operation": "getAll",
+        "calendar": { "value": "primary", "mode": "list" },
+        "returnAll": false,
+        "limit": 10,
+        "options": {
+          "timeMin": "={{ $json.calendar_start }}",
+          "timeMax": "={{ $json.calendar_end }}",
+          "singleEvents": true
+        }
+      },
+      "id": "calendar-check",
+      "name": "Vérifier Disponibilité",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.2,
+      "position": [920, 200],
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "google-calendar-credentials",
+          "name": "Google Calendar OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Vérifier si le créneau est libre\nconst events = $input.all();\nconst validationData = $('Validation Demande').first().json;\n\nconst isAvailable = events.length === 0 || \n  (events.length === 1 && events[0].json && Object.keys(events[0].json).length === 0);\n\nreturn [{\n  json: {\n    ...validationData,\n    creneau_disponible: isAvailable,\n    conflits: isAvailable ? [] : events.map(e => e.json.summary || 'Intervention existante')\n  }\n}];"
+      },
+      "id": "code-check-availability",
+      "name": "Analyser Disponibilité",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1140, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "condition-available",
+              "leftValue": "={{ $json.creneau_disponible }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-available",
+      "name": "Créneau Libre?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1360, 200]
+    },
+    {
+      "parameters": {
+        "resource": "event",
+        "operation": "create",
+        "calendar": { "value": "primary", "mode": "list" },
+        "start": "={{ $json.calendar_start }}",
+        "end": "={{ $json.calendar_end }}",
+        "additionalFields": {
+          "summary": "Intervention {{ $json.type_travaux }} - {{ $json.prenom }} {{ $json.nom }}",
+          "description": "Intervention planifiée\\n\\nClient: {{ $json.prenom }} {{ $json.nom }}\\nTél: {{ $json.telephone }}\\nEmail: {{ $json.email }}\\nType: {{ $json.type_travaux }}\\nDurée: {{ $json.duree_heures }}h\\nDescription: {{ $json.description }}\\n\\nDevis: {{ $json.devis_lie }}\\nRéf: {{ $json.intervention_id }}",
+          "location": "={{ $json.adresse_chantier }}",
+          "attendees": ["={{ $json.email }}"],
+          "sendUpdates": "all"
+        }
+      },
+      "id": "calendar-create",
+      "name": "Créer Événement Calendar",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.2,
+      "position": [1580, 100],
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "google-calendar-credentials",
+          "name": "Google Calendar OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "create",
+        "databaseId": {
+          "__rl": true,
+          "value": "={{ $env.NOTION_DB_INTERVENTIONS_ARTISAN }}",
+          "mode": "id"
+        },
+        "propertiesUi": {
+          "propertyValues": [
+            { "key": "Intervention ID|rich_text", "textContent": "={{ $('Analyser Disponibilité').item.json.intervention_id }}" },
+            { "key": "Client|title", "textContent": "={{ $('Analyser Disponibilité').item.json.nom }} {{ $('Analyser Disponibilité').item.json.prenom }}" },
+            { "key": "Email|email", "emailValue": "={{ $('Analyser Disponibilité').item.json.email }}" },
+            { "key": "Téléphone|phone_number", "phoneValue": "={{ $('Analyser Disponibilité').item.json.telephone }}" },
+            { "key": "Adresse|rich_text", "textContent": "={{ $('Analyser Disponibilité').item.json.adresse_chantier }}" },
+            { "key": "Date Intervention|date", "dateValue": "={{ $('Analyser Disponibilité').item.json.calendar_start }}" },
+            { "key": "Durée Prévue|number", "numberValue": "={{ $('Analyser Disponibilité').item.json.duree_heures }}" },
+            { "key": "Statut|status", "statusValue": "Planifié" },
+            { "key": "Google Event ID|rich_text", "textContent": "={{ $json.id }}" },
+            { "key": "Rappel Envoyé|checkbox", "checkboxValue": false },
+            { "key": "Suivi Envoyé|checkbox", "checkboxValue": false },
+            { "key": "Avis Google Demandé|checkbox", "checkboxValue": false }
+          ]
+        },
+        "options": {}
+      },
+      "id": "notion-create",
+      "name": "Enregistrer Notion",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [1800, 100],
+      "credentials": {
+        "notionApi": {
+          "id": "notion-credentials",
+          "name": "Notion API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Analyser Disponibilité').item.json.email }}",
+        "subject": "Confirmation intervention - {{ $('Analyser Disponibilité').item.json.date_intervention_fr }} - {{ $env.ARTISAN_NOM_ENTREPRISE }}",
+        "emailType": "html",
+        "message": "<!DOCTYPE html>\n<html>\n<head>\n  <meta charset=\"UTF-8\">\n  <style>\n    body { font-family: Arial, sans-serif; color: #333; line-height: 1.6; }\n    .header { background: #16a34a; color: white; padding: 20px; text-align: center; }\n    .content { padding: 30px; max-width: 600px; margin: 0 auto; }\n    .rdv-box { background: #f0fdf4; border-left: 4px solid #16a34a; padding: 20px; margin: 20px 0; }\n    .footer { background: #f5f5f5; padding: 20px; font-size: 12px; color: #666; }\n    .rgpd { border-top: 1px solid #ddd; margin-top: 20px; padding-top: 15px; font-size: 11px; }\n  </style>\n</head>\n<body>\n  <div class=\"header\">\n    <h1>Intervention Confirmée</h1>\n  </div>\n  <div class=\"content\">\n    <p>Bonjour {{ $('Analyser Disponibilité').item.json.prenom }},</p>\n    \n    <p>Votre intervention est <strong>confirmée</strong>. Voici les détails :</p>\n    \n    <div class=\"rdv-box\">\n      <p><strong>Date :</strong> {{ $('Analyser Disponibilité').item.json.date_intervention_fr }}</p>\n      <p><strong>Heure :</strong> {{ $('Analyser Disponibilité').item.json.heure_intervention }}</p>\n      <p><strong>Durée prévue :</strong> {{ $('Analyser Disponibilité').item.json.duree_heures }} heure(s)</p>\n      <p><strong>Type :</strong> {{ $('Analyser Disponibilité').item.json.type_travaux }}</p>\n      <p><strong>Adresse :</strong> {{ $('Analyser Disponibilité').item.json.adresse_chantier }}</p>\n      <p><strong>Référence :</strong> {{ $('Analyser Disponibilité').item.json.intervention_id }}</p>\n    </div>\n    \n    <p><strong>Merci de prévoir :</strong></p>\n    <ul>\n      <li>Accès au chantier / logement dégagé</li>\n      <li>Coupure d'eau/électricité si nécessaire (nous vous préviendrons)</li>\n      <li>Présence d'un adulte sur place</li>\n    </ul>\n    \n    <p>Une invitation a été envoyée sur votre calendrier.</p>\n    \n    <p><strong>Besoin de modifier ou annuler ?</strong><br>\n    Contactez-nous au {{ $env.ARTISAN_TELEPHONE }} au moins 24h à l'avance.</p>\n    \n    <p>Cordialement,<br>\n    <strong>{{ $env.ARTISAN_NOM_ENTREPRISE }}</strong></p>\n    \n    <div class=\"rgpd\">\n      <p><strong>RGPD</strong> : Vos données sont traitées pour la gestion de votre intervention. Droits d'accès, rectification, effacement : {{ $env.ARTISAN_EMAIL_RGPD }}</p>\n      <p>Réf. traçabilité : {{ $('Analyser Disponibilité').item.json.rgpd_trace_id }}</p>\n    </div>\n  </div>\n  <div class=\"footer\">\n    <p>Email envoyé automatiquement suite à la planification de votre intervention.</p>\n  </div>\n</body>\n</html>",
+        "options": {
+          "replyTo": "={{ $env.ARTISAN_EMAIL }}"
+        }
+      },
+      "id": "gmail-confirmation",
+      "name": "Email Confirmation",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [2020, 100],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "gmail-credentials",
+          "name": "Gmail OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": true,\n  \"message\": \"Intervention planifiée avec succès.\",\n  \"intervention\": {\n    \"reference\": \"{{ $('Analyser Disponibilité').item.json.intervention_id }}\",\n    \"date\": \"{{ $('Analyser Disponibilité').item.json.date_intervention_fr }}\",\n    \"heure\": \"{{ $('Analyser Disponibilité').item.json.heure_intervention }}\",\n    \"duree\": \"{{ $('Analyser Disponibilité').item.json.duree_heures }}h\",\n    \"adresse\": \"{{ $('Analyser Disponibilité').item.json.adresse_chantier }}\"\n  }\n}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [{ "name": "Content-Type", "value": "application/json; charset=utf-8" }]
+          }
+        }
+      },
+      "id": "respond-success",
+      "name": "Réponse Succès",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2240, 100]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": false,\n  \"error\": \"Ce créneau n'est plus disponible.\",\n  \"code\": \"CRENEAU_INDISPONIBLE\",\n  \"suggestion\": \"Veuillez choisir un autre créneau ou une autre date.\"\n}",
+        "options": {
+          "responseCode": 409,
+          "responseHeaders": {
+            "entries": [{ "name": "Content-Type", "value": "application/json; charset=utf-8" }]
+          }
+        }
+      },
+      "id": "respond-unavailable",
+      "name": "Réponse Indisponible",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1580, 320]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "log-error",
+              "name": "log_validation_error",
+              "value": "={{ JSON.stringify({ action: 'PLANNING_VALIDATION_FAILED', error_code: $json.error_code, error_message: $json.error_message, timestamp: $json.timestamp, workflow: 'artisan-planning-intervention-v1.0', execution_id: $execution.id }) }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-error-log",
+      "name": "Log Erreur Validation",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [920, 420]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": false,\n  \"error\": \"{{ $('Validation Demande').item.json.error_message }}\",\n  \"code\": \"{{ $('Validation Demande').item.json.error_code }}\"\n}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [{ "name": "Content-Type", "value": "application/json; charset=utf-8" }]
+          }
+        }
+      },
+      "id": "respond-validation-error",
+      "name": "Réponse Erreur Validation",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1140, 420]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "success-log",
+              "name": "log_success",
+              "value": "={{ JSON.stringify({ action: 'INTERVENTION_PLANNED', intervention_id: $('Analyser Disponibilité').item.json.intervention_id, email_masked: $('Analyser Disponibilité').item.json.email.replace(/(.{2}).*(@.*)/, '$1***$2'), calendar_event_id: $('Créer Événement Calendar').item.json.id, timestamp: new Date().toISOString(), workflow: 'artisan-planning-intervention-v1.0' }) }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-success-log",
+      "name": "Log Succès",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [2240, -20]
+    }
+  ],
+  "connections": {
+    "Webhook Planification": {
+      "main": [[{ "node": "Validation Demande", "type": "main", "index": 0 }]]
+    },
+    "Validation Demande": {
+      "main": [[{ "node": "Demande Valide?", "type": "main", "index": 0 }]]
+    },
+    "Demande Valide?": {
+      "main": [
+        [{ "node": "Vérifier Disponibilité", "type": "main", "index": 0 }],
+        [{ "node": "Log Erreur Validation", "type": "main", "index": 0 }]
+      ]
+    },
+    "Vérifier Disponibilité": {
+      "main": [[{ "node": "Analyser Disponibilité", "type": "main", "index": 0 }]]
+    },
+    "Analyser Disponibilité": {
+      "main": [[{ "node": "Créneau Libre?", "type": "main", "index": 0 }]]
+    },
+    "Créneau Libre?": {
+      "main": [
+        [{ "node": "Créer Événement Calendar", "type": "main", "index": 0 }],
+        [{ "node": "Réponse Indisponible", "type": "main", "index": 0 }]
+      ]
+    },
+    "Créer Événement Calendar": {
+      "main": [[{ "node": "Enregistrer Notion", "type": "main", "index": 0 }]]
+    },
+    "Enregistrer Notion": {
+      "main": [[{ "node": "Email Confirmation", "type": "main", "index": 0 }]]
+    },
+    "Email Confirmation": {
+      "main": [
+        [{ "node": "Log Succès", "type": "main", "index": 0 }],
+        [{ "node": "Réponse Succès", "type": "main", "index": 0 }]
+      ]
+    },
+    "Log Erreur Validation": {
+      "main": [[{ "node": "Réponse Erreur Validation", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "staticData": null,
+  "tags": [
+    { "id": "tag-artisan", "name": "artisan" },
+    { "id": "tag-rgpd", "name": "rgpd" },
+    { "id": "tag-planning", "name": "planning" }
+  ],
+  "pinData": {},
+  "versionId": "1.0.0"
+}

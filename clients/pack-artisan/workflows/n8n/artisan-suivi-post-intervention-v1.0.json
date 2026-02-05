@@ -1,0 +1,287 @@
+{
+  "name": "artisan-suivi-post-intervention-v1.0",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hour": 10
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Trigger Quotidien 10h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300],
+      "notes": "Déclenche chaque jour à 10h pour suivi post-intervention J-2"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Calcul date J-2 pour trouver interventions terminées il y a 2 jours\nconst now = new Date();\nconst jMoins2 = new Date(now);\njMoins2.setDate(jMoins2.getDate() - 2);\n\nconst dateStart = new Date(jMoins2);\ndateStart.setHours(0, 0, 0, 0);\nconst dateEnd = new Date(jMoins2);\ndateEnd.setHours(23, 59, 59, 999);\n\nconst workflow_context = {\n  workflowName: $workflow.name,\n  executionId: $execution.id,\n  startTime: now.toISOString(),\n  trigger: 'schedule',\n  targetDate: jMoins2.toISOString().split('T')[0],\n  status: 'started'\n};\n\nconsole.log(JSON.stringify(workflow_context));\n\nreturn {\n  json: {\n    dateStart: dateStart.toISOString(),\n    dateEnd: dateEnd.toISOString(),\n    targetDate: jMoins2.toISOString().split('T')[0],\n    workflow_context\n  }\n};"
+      },
+      "id": "init-context",
+      "name": "Init Context & Dates J-2",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "getAll",
+        "databaseId": {
+          "__rl": true,
+          "value": "={{ $env.NOTION_DB_INTERVENTIONS_ARTISAN }}",
+          "mode": "id"
+        },
+        "returnAll": true,
+        "filterType": "formula",
+        "filters": {
+          "and": [
+            {
+              "property": "Statut",
+              "status": { "equals": "Terminé" }
+            },
+            {
+              "property": "Suivi Envoyé",
+              "checkbox": { "equals": false }
+            },
+            {
+              "property": "Date Intervention",
+              "date": {
+                "on_or_before": "={{ $json.dateEnd }}",
+                "on_or_after": "={{ $json.dateStart }}"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "notion-query",
+      "name": "Query Interventions Terminées J-2",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [680, 300],
+      "credentials": {
+        "notionApi": {
+          "id": "notion-credentials",
+          "name": "Notion API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extraire données des pages Notion et vérifier opposition\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const page = item.json;\n  const props = page.properties || {};\n  \n  // Extraire les propriétés Notion\n  const email = props['Email']?.email || '';\n  const client = props['Client']?.title?.[0]?.plain_text || '';\n  const interventionId = props['Intervention ID']?.rich_text?.[0]?.plain_text || '';\n  const adresse = props['Adresse']?.rich_text?.[0]?.plain_text || '';\n  const avisDejaEnvoye = props['Avis Google Demandé']?.checkbox || false;\n  \n  if (!email) {\n    console.log(`RGPD_WARNING: Intervention ${interventionId} sans email, ignorée`);\n    continue;\n  }\n  \n  const rgpdTraceId = `SUIVI-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;\n  \n  results.push({\n    json: {\n      notionPageId: page.id,\n      interventionId,\n      client,\n      email,\n      adresse,\n      avisDejaEnvoye,\n      rgpdTraceId,\n      step: 'extraction',\n      status: 'success'\n    }\n  });\n}\n\nif (results.length === 0) {\n  return [{ json: { noResults: true, message: 'Aucune intervention terminée à suivre', timestamp: new Date().toISOString() } }];\n}\n\nconsole.log(`${results.length} interventions à suivre`);\nreturn results;"
+      },
+      "id": "extract-data",
+      "name": "Extraire Données Interventions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "condition-has-results",
+              "leftValue": "={{ $json.noResults }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "notTrue" }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "check-results",
+      "name": "Interventions à suivre?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.email }}",
+        "subject": "Comment s'est passée notre intervention ? - {{ $env.ARTISAN_NOM_ENTREPRISE }}",
+        "emailType": "html",
+        "message": "<!DOCTYPE html>\n<html>\n<head>\n  <meta charset=\"UTF-8\">\n  <style>\n    body { font-family: Arial, sans-serif; color: #333; line-height: 1.6; }\n    .header { background: #7c3aed; color: white; padding: 20px; text-align: center; }\n    .content { padding: 30px; max-width: 600px; margin: 0 auto; }\n    .satisfaction-box { background: #f5f3ff; border-left: 4px solid #7c3aed; padding: 20px; margin: 20px 0; text-align: center; }\n    .btn-avis { background: #f59e0b; color: white; padding: 15px 30px; text-decoration: none; border-radius: 6px; display: inline-block; margin: 15px 0; font-weight: bold; font-size: 16px; }\n    .footer { background: #f5f5f5; padding: 20px; font-size: 12px; color: #666; }\n    .rgpd { font-size: 10px; color: #999; margin-top: 20px; }\n  </style>\n</head>\n<body>\n  <div class=\"header\">\n    <h1>Votre avis nous intéresse</h1>\n  </div>\n  <div class=\"content\">\n    <p>Bonjour {{ $json.client }},</p>\n    \n    <p>Nous sommes intervenus récemment chez vous et espérons que tout s'est bien passé.</p>\n    \n    <p>Votre satisfaction est notre priorité. Si vous avez la moindre question ou remarque concernant notre intervention, n'hésitez pas à nous contacter.</p>\n    \n    <div class=\"satisfaction-box\">\n      <p><strong>Satisfait(e) de notre travail ?</strong></p>\n      <p>Un avis Google nous aide énormément à faire connaître notre activité auprès de vos voisins :</p>\n      <a href=\"{{ $env.ARTISAN_GOOGLE_REVIEW_LINK }}\" class=\"btn-avis\">Laisser un avis Google</a>\n      <p style=\"font-size: 12px; color: #666;\">Cela ne prend que 2 minutes et c'est très apprécié !</p>\n    </div>\n    \n    <p>Merci pour votre confiance.</p>\n    \n    <p>Cordialement,<br>\n    <strong>{{ $env.ARTISAN_NOM_ENTREPRISE }}</strong><br>\n    {{ $env.ARTISAN_TELEPHONE }}</p>\n  </div>\n  <div class=\"footer\">\n    <p>Ce message est envoyé automatiquement après chaque intervention.</p>\n    <p class=\"rgpd\">\n      <strong>RGPD</strong> : Ce message est envoyé dans le cadre du suivi de notre prestation (intérêt légitime).\n      Si vous ne souhaitez plus recevoir ce type de message, répondez \"STOP\" ou contactez {{ $env.ARTISAN_EMAIL_RGPD }}.<br>\n      ID traçabilité : {{ $json.rgpdTraceId }}\n    </p>\n  </div>\n</body>\n</html>",
+        "options": {
+          "replyTo": "={{ $env.ARTISAN_EMAIL }}",
+          "appendAttribution": false
+        }
+      },
+      "id": "send-suivi-email",
+      "name": "Email Suivi + Avis Google",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [1340, 200],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "gmail-credentials",
+          "name": "Gmail OAuth2"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "update",
+        "pageId": "={{ $('Extraire Données Interventions').item.json.notionPageId }}",
+        "propertiesUi": {
+          "propertyValues": [
+            { "key": "Suivi Envoyé|checkbox", "checkboxValue": true },
+            { "key": "Avis Google Demandé|checkbox", "checkboxValue": true }
+          ]
+        },
+        "options": {}
+      },
+      "id": "notion-update",
+      "name": "MAJ Notion Suivi Envoyé",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [1560, 200],
+      "credentials": {
+        "notionApi": {
+          "id": "notion-credentials",
+          "name": "Notion API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log succès suivi - email masqué\nconst extractData = $('Extraire Données Interventions').item.json;\nconst log = {\n  step: 'suivi_sent',\n  status: 'success',\n  rgpdTraceId: extractData.rgpdTraceId,\n  clientEmail: extractData.email.replace(/(.{2}).*(@.*)/, '$1***$2'),\n  interventionId: extractData.interventionId,\n  avisGoogleDemande: true,\n  timestamp: new Date().toISOString()\n};\nconsole.log(JSON.stringify(log));\nreturn { json: log };"
+      },
+      "id": "log-success",
+      "name": "Log Succès",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1780, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log aucune intervention à suivre\nconst log = {\n  step: 'no_interventions',\n  status: 'completed',\n  message: 'Aucune intervention terminée à suivre aujourd\\'hui',\n  timestamp: new Date().toISOString(),\n  workflowName: $workflow.name,\n  executionId: $execution.id\n};\nconsole.log(JSON.stringify(log));\nreturn { json: log };"
+      },
+      "id": "log-no-results",
+      "name": "Log Aucun Suivi",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 420]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log erreur email suivi\nconst extractData = $('Extraire Données Interventions').item.json;\nconst log = {\n  step: 'suivi_email_failed',\n  status: 'error',\n  rgpdTraceId: extractData.rgpdTraceId,\n  clientEmail: extractData.email.replace(/(.{2}).*(@.*)/, '$1***$2'),\n  interventionId: extractData.interventionId,\n  errorMessage: 'Échec envoi email suivi',\n  timestamp: new Date().toISOString()\n};\nconsole.error(JSON.stringify(log));\nreturn { json: log };"
+      },
+      "id": "log-email-error",
+      "name": "Log Erreur Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 320]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Récapitulatif final\nconst allItems = $input.all();\nconst summary = {\n  step: 'workflow_completed',\n  status: 'success',\n  totalProcessed: allItems.length,\n  successCount: allItems.filter(i => i.json.status === 'success').length,\n  errorCount: allItems.filter(i => i.json.status === 'error').length,\n  timestamp: new Date().toISOString(),\n  workflowName: $workflow.name,\n  executionId: $execution.id\n};\nconsole.log(JSON.stringify(summary));\nreturn { json: summary };"
+      },
+      "id": "summary",
+      "name": "Récapitulatif",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2000, 260]
+    },
+    {
+      "parameters": {
+        "errorWorkflow": "={{$workflow.id}}"
+      },
+      "id": "try-catch-wrapper",
+      "name": "Try/Catch",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [240, 520]
+    },
+    {
+      "parameters": {
+        "jsCode": "const error = $input.item.json;\nconst errorLog = {\n  step: 'error_handler',\n  status: 'error',\n  errorCode: error.error?.name || 'UNKNOWN_ERROR',\n  errorMessage: error.error?.message || 'Erreur inconnue',\n  errorNode: error.node?.name || 'Unknown',\n  timestamp: new Date().toISOString(),\n  workflowName: $workflow.name,\n  executionId: $execution.id,\n  severity: 'high'\n};\nconsole.error(JSON.stringify(errorLog));\nreturn { json: errorLog };"
+      },
+      "id": "error-handler",
+      "name": "Error Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 520]
+    }
+  ],
+  "connections": {
+    "Trigger Quotidien 10h": {
+      "main": [[{ "node": "Init Context & Dates J-2", "type": "main", "index": 0 }]]
+    },
+    "Init Context & Dates J-2": {
+      "main": [[{ "node": "Query Interventions Terminées J-2", "type": "main", "index": 0 }]]
+    },
+    "Query Interventions Terminées J-2": {
+      "main": [[{ "node": "Extraire Données Interventions", "type": "main", "index": 0 }]]
+    },
+    "Extraire Données Interventions": {
+      "main": [[{ "node": "Interventions à suivre?", "type": "main", "index": 0 }]]
+    },
+    "Interventions à suivre?": {
+      "main": [
+        [{ "node": "Email Suivi + Avis Google", "type": "main", "index": 0 }],
+        [{ "node": "Log Aucun Suivi", "type": "main", "index": 0 }]
+      ]
+    },
+    "Email Suivi + Avis Google": {
+      "main": [
+        [{ "node": "MAJ Notion Suivi Envoyé", "type": "main", "index": 0 }],
+        [{ "node": "Log Erreur Email", "type": "main", "index": 0 }]
+      ]
+    },
+    "MAJ Notion Suivi Envoyé": {
+      "main": [[{ "node": "Log Succès", "type": "main", "index": 0 }]]
+    },
+    "Log Succès": {
+      "main": [[{ "node": "Récapitulatif", "type": "main", "index": 0 }]]
+    },
+    "Log Erreur Email": {
+      "main": [[{ "node": "Récapitulatif", "type": "main", "index": 0 }]]
+    },
+    "Try/Catch": {
+      "main": [[{ "node": "Error Handler", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "={{$workflow.id}}"
+  },
+  "staticData": null,
+  "tags": [
+    { "name": "artisan" },
+    { "name": "suivi" },
+    { "name": "avis-google" },
+    { "name": "production" }
+  ],
+  "triggerCount": 1,
+  "versionId": "1.0.0",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "instanceId": "vazbolota-consulting"
+  },
+  "_documentation": {
+    "description": "Suivi post-intervention J-2 avec demande d'avis Google",
+    "version": "1.0.0",
+    "author": "Vazbolota Consulting",
+    "rgpd": {
+      "finalite": "Suivi qualité et collecte avis - intérêt légitime",
+      "baseLegale": "Intérêt légitime (Art. 6.1.f RGPD) avec droit d'opposition",
+      "donneesTraitees": ["Nom", "Email", "Intervention ID"],
+      "destinataires": ["Notion (lecture/écriture)", "Gmail (envoi)"],
+      "conservation": "Logs: 1 an / Données intervention: 3 ans",
+      "securite": ["HTTPS", "OAuth2", "Logs anonymisés"]
+    }
+  }
+}

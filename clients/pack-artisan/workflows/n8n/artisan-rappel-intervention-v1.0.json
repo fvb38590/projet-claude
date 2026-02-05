@@ -1,0 +1,265 @@
+{
+  "name": "artisan-rappel-intervention-v1.0",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hour": 8
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Trigger Quotidien 8h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300],
+      "notes": "Déclenche chaque jour à 8h pour rappels J-1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Calcul dates J+1 pour rappels intervention\nconst now = new Date();\nconst tomorrow = new Date(now);\ntomorrow.setDate(tomorrow.getDate() + 1);\n\nconst timeMin = new Date(tomorrow);\ntimeMin.setHours(0, 0, 0, 0);\nconst timeMax = new Date(tomorrow);\ntimeMax.setHours(23, 59, 59, 999);\n\nconst workflow_context = {\n  workflowName: $workflow.name,\n  executionId: $execution.id,\n  startTime: now.toISOString(),\n  trigger: 'schedule',\n  targetDate: tomorrow.toISOString().split('T')[0],\n  status: 'started'\n};\n\nconsole.log(JSON.stringify(workflow_context));\n\nreturn {\n  json: {\n    timeMin: timeMin.toISOString(),\n    timeMax: timeMax.toISOString(),\n    workflow_context\n  }\n};"
+      },
+      "id": "init-context",
+      "name": "Init Context & Dates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "resource": "event",
+        "calendar": {
+          "__rl": true,
+          "value": "primary",
+          "mode": "list"
+        },
+        "returnAll": true,
+        "options": {
+          "timeMin": "={{ $json.timeMin }}",
+          "timeMax": "={{ $json.timeMax }}",
+          "singleEvents": true,
+          "orderBy": "startTime"
+        }
+      },
+      "id": "google-calendar",
+      "name": "Calendar - Interventions J+1",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.1,
+      "position": [680, 300],
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "google-calendar-credentials",
+          "name": "Google Calendar OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": false, "leftValue": "", "typeValidation": "loose" },
+          "conditions": [
+            {
+              "id": "condition-has-attendees",
+              "leftValue": "={{ $json.attendees }}",
+              "rightValue": "",
+              "operator": { "type": "array", "operation": "notEmpty" }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "filter-interventions",
+      "name": "Filtrer Interventions Clients",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extraction détails intervention + conformité RGPD\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const event = item.json;\n  const attendees = event.attendees || [];\n\n  for (const attendee of attendees) {\n    if (attendee.organizer === true) continue;\n    if (!attendee.email) {\n      console.log(`RGPD_WARNING: Participant sans email ignoré pour event ${event.id}`);\n      continue;\n    }\n\n    const startDateTime = new Date(event.start.dateTime || event.start.date);\n    const heureIntervention = startDateTime.toLocaleTimeString('fr-FR', {\n      hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Paris'\n    });\n    const dateIntervention = startDateTime.toLocaleDateString('fr-FR', {\n      weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',\n      timeZone: 'Europe/Paris'\n    });\n\n    const rgpdTraceId = `RAPPEL-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;\n\n    results.push({\n      json: {\n        eventId: event.id,\n        titre: event.summary || 'Intervention',\n        description: event.description || '',\n        adresse: event.location || 'Adresse à confirmer',\n        dateIntervention,\n        heureIntervention,\n        dateTimeISO: startDateTime.toISOString(),\n        clientEmail: attendee.email,\n        clientNom: attendee.displayName || attendee.email.split('@')[0],\n        rgpdTraceId,\n        rgpdFinalite: 'Rappel intervention - Base légale: exécution contrat',\n        rgpdTimestamp: new Date().toISOString(),\n        step: 'extraction_details',\n        status: 'success'\n      }\n    });\n  }\n}\n\nif (results.length === 0) {\n  return [{ json: { noResults: true, message: 'Aucune intervention client trouvée pour demain', timestamp: new Date().toISOString() } }];\n}\n\nconsole.log(`Extraction OK: ${results.length} rappels à envoyer`);\nreturn results;"
+      },
+      "id": "extract-details",
+      "name": "Extraire Détails Intervention",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "condition-has-results",
+              "leftValue": "={{ $json.noResults }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "notTrue" }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "check-results",
+      "name": "Interventions à rappeler?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.clientEmail }}",
+        "subject": "Rappel : Intervention prévue demain {{ $json.heureIntervention }} - {{ $env.ARTISAN_NOM_ENTREPRISE }}",
+        "emailType": "html",
+        "message": "<!DOCTYPE html>\n<html>\n<head>\n  <meta charset=\"UTF-8\">\n  <style>\n    body { font-family: Arial, sans-serif; color: #333; line-height: 1.6; }\n    .header { background: #f59e0b; color: white; padding: 20px; text-align: center; }\n    .content { padding: 30px; max-width: 600px; margin: 0 auto; }\n    .rdv-box { background: #fffbeb; border-left: 4px solid #f59e0b; padding: 20px; margin: 20px 0; }\n    .checklist { background: #f8f9fa; padding: 15px; margin: 15px 0; border-radius: 4px; }\n    .footer { background: #f5f5f5; padding: 20px; font-size: 12px; color: #666; }\n    .rgpd { font-size: 10px; color: #999; margin-top: 20px; }\n  </style>\n</head>\n<body>\n  <div class=\"header\">\n    <h1>Rappel - Intervention Demain</h1>\n  </div>\n  <div class=\"content\">\n    <p>Bonjour {{ $json.clientNom }},</p>\n    \n    <p>Nous vous rappelons que notre intervention est prévue <strong>demain</strong> :</p>\n    \n    <div class=\"rdv-box\">\n      <p><strong>{{ $json.titre }}</strong></p>\n      <p>Date : {{ $json.dateIntervention }}</p>\n      <p>Heure : {{ $json.heureIntervention }}</p>\n      <p>Adresse : {{ $json.adresse }}</p>\n    </div>\n    \n    <div class=\"checklist\">\n      <p><strong>Pour préparer notre venue :</strong></p>\n      <ul>\n        <li>Assurez-vous que l'accès au chantier est dégagé</li>\n        <li>Prévoyez la présence d'un adulte sur place</li>\n        <li>Si nécessaire, protégez les meubles et sols à proximité</li>\n      </ul>\n    </div>\n    \n    <p><strong>Empêchement ?</strong> Contactez-nous au plus vite au {{ $env.ARTISAN_TELEPHONE }}.</p>\n    \n    <p>À demain !<br>\n    <strong>{{ $env.ARTISAN_NOM_ENTREPRISE }}</strong></p>\n  </div>\n  <div class=\"footer\">\n    <p>Ce rappel est envoyé automatiquement la veille de chaque intervention.</p>\n    <p class=\"rgpd\">\n      <strong>RGPD</strong> : Ce rappel est envoyé dans le cadre de l'exécution de notre prestation.\n      Droits d'accès, rectification, suppression : {{ $env.ARTISAN_EMAIL_RGPD }}<br>\n      ID traçabilité : {{ $json.rgpdTraceId }}\n    </p>\n  </div>\n</body>\n</html>",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "send-reminder",
+      "name": "Envoyer Email Rappel",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [1560, 200],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "gmail-credentials",
+          "name": "Gmail OAuth2"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log succès envoi rappel - email masqué RGPD\nconst item = $input.item.json;\nconst log = {\n  step: 'email_sent',\n  status: 'success',\n  rgpdTraceId: item.rgpdTraceId,\n  clientEmail: item.clientEmail.replace(/(.{2}).*(@.*)/, '$1***$2'),\n  eventId: item.eventId,\n  dateIntervention: item.dateIntervention,\n  timestamp: new Date().toISOString(),\n  message: 'Rappel intervention envoyé'\n};\nconsole.log(JSON.stringify(log));\nreturn { json: log };"
+      },
+      "id": "log-success",
+      "name": "Log Succès",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1780, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log aucune intervention\nconst log = {\n  step: 'no_interventions',\n  status: 'completed',\n  message: 'Aucune intervention client trouvée pour demain',\n  timestamp: new Date().toISOString(),\n  workflowName: $workflow.name,\n  executionId: $execution.id\n};\nconsole.log(JSON.stringify(log));\nreturn { json: log };"
+      },
+      "id": "log-no-results",
+      "name": "Log Aucune Intervention",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 420]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log échec envoi email\nconst item = $input.item.json;\nconst log = {\n  step: 'email_failed',\n  status: 'error',\n  rgpdTraceId: item.rgpdTraceId,\n  clientEmail: item.clientEmail.replace(/(.{2}).*(@.*)/, '$1***$2'),\n  eventId: item.eventId,\n  errorMessage: 'Échec envoi email rappel',\n  timestamp: new Date().toISOString()\n};\nconsole.error(JSON.stringify(log));\nreturn { json: log };"
+      },
+      "id": "log-email-error",
+      "name": "Log Erreur Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1780, 320]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Récapitulatif final\nconst allItems = $input.all();\nconst summary = {\n  step: 'workflow_completed',\n  status: 'success',\n  totalProcessed: allItems.length,\n  successCount: allItems.filter(i => i.json.status === 'success').length,\n  errorCount: allItems.filter(i => i.json.status === 'error').length,\n  timestamp: new Date().toISOString(),\n  workflowName: $workflow.name,\n  executionId: $execution.id\n};\nconsole.log(JSON.stringify(summary));\nreturn { json: summary };"
+      },
+      "id": "summary",
+      "name": "Récapitulatif",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2000, 260]
+    },
+    {
+      "parameters": {
+        "errorWorkflow": "={{$workflow.id}}"
+      },
+      "id": "try-catch-wrapper",
+      "name": "Try/Catch",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [240, 520]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Error Handler\nconst error = $input.item.json;\nconst errorLog = {\n  step: 'error_handler',\n  status: 'error',\n  errorCode: error.error?.name || 'UNKNOWN_ERROR',\n  errorMessage: error.error?.message || 'Erreur inconnue',\n  errorNode: error.node?.name || 'Unknown',\n  timestamp: new Date().toISOString(),\n  workflowName: $workflow.name,\n  executionId: $execution.id,\n  severity: 'high'\n};\nconsole.error(JSON.stringify(errorLog));\nreturn { json: errorLog };"
+      },
+      "id": "error-handler",
+      "name": "Error Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 520]
+    }
+  ],
+  "connections": {
+    "Trigger Quotidien 8h": {
+      "main": [[{ "node": "Init Context & Dates", "type": "main", "index": 0 }]]
+    },
+    "Init Context & Dates": {
+      "main": [[{ "node": "Calendar - Interventions J+1", "type": "main", "index": 0 }]]
+    },
+    "Calendar - Interventions J+1": {
+      "main": [[{ "node": "Filtrer Interventions Clients", "type": "main", "index": 0 }]]
+    },
+    "Filtrer Interventions Clients": {
+      "main": [[{ "node": "Extraire Détails Intervention", "type": "main", "index": 0 }]]
+    },
+    "Extraire Détails Intervention": {
+      "main": [[{ "node": "Interventions à rappeler?", "type": "main", "index": 0 }]]
+    },
+    "Interventions à rappeler?": {
+      "main": [
+        [{ "node": "Envoyer Email Rappel", "type": "main", "index": 0 }],
+        [{ "node": "Log Aucune Intervention", "type": "main", "index": 0 }]
+      ]
+    },
+    "Envoyer Email Rappel": {
+      "main": [
+        [{ "node": "Log Succès", "type": "main", "index": 0 }],
+        [{ "node": "Log Erreur Email", "type": "main", "index": 0 }]
+      ]
+    },
+    "Log Succès": {
+      "main": [[{ "node": "Récapitulatif", "type": "main", "index": 0 }]]
+    },
+    "Log Erreur Email": {
+      "main": [[{ "node": "Récapitulatif", "type": "main", "index": 0 }]]
+    },
+    "Try/Catch": {
+      "main": [[{ "node": "Error Handler", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "={{$workflow.id}}"
+  },
+  "staticData": null,
+  "tags": [
+    { "name": "artisan" },
+    { "name": "rappel" },
+    { "name": "production" }
+  ],
+  "triggerCount": 1,
+  "versionId": "1.0.0",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "instanceId": "vazbolota-consulting"
+  },
+  "_documentation": {
+    "description": "Rappel automatique J-1 des interventions artisan",
+    "version": "1.0.0",
+    "author": "Vazbolota Consulting",
+    "rgpd": {
+      "finalite": "Rappel d'intervention clients - amélioration du service",
+      "baseLegale": "Exécution du contrat (Art. 6.1.b RGPD)",
+      "donneesTraitees": ["Nom", "Email", "Date/heure intervention", "Adresse chantier"],
+      "destinataires": ["Google Calendar (lecture)", "Gmail (envoi)"],
+      "conservation": "Logs: 1 an / Données intervention: durée du contrat",
+      "securite": ["HTTPS", "OAuth2", "Logs anonymisés"]
+    }
+  }
+}

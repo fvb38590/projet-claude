@@ -1,0 +1,328 @@
+{
+  "name": "artisan-crm-demande-devis-v1.0",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "artisan-demande-devis",
+        "options": {
+          "responseMode": "responseNode"
+        }
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Demande Devis",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "artisan-demande-devis"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validation RGPD et sanitization des données - Pack Artisan\nconst input = $input.first().json;\n\n// 1. Vérification consentement RGPD obligatoire\nif (!input.consentement_rgpd || input.consentement_rgpd !== true) {\n  return [{\n    json: {\n      valid: false,\n      error_code: 'RGPD_NO_CONSENT',\n      error_message: 'Consentement RGPD non fourni ou invalide',\n      timestamp: new Date().toISOString()\n    }\n  }];\n}\n\n// 2. Validation email\nconst emailRegex = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;\nif (!input.email || !emailRegex.test(input.email)) {\n  return [{\n    json: {\n      valid: false,\n      error_code: 'VALIDATION_EMAIL_INVALID',\n      error_message: 'Format email invalide',\n      timestamp: new Date().toISOString()\n    }\n  }];\n}\n\n// 3. Validation champs obligatoires\nconst requiredFields = ['nom', 'prenom', 'email', 'telephone', 'type_travaux', 'adresse_chantier', 'code_postal'];\nfor (const field of requiredFields) {\n  if (!input[field] || input[field].toString().trim() === '') {\n    return [{\n      json: {\n        valid: false,\n        error_code: 'VALIDATION_MISSING_FIELD',\n        error_message: `Champ obligatoire manquant: ${field}`,\n        timestamp: new Date().toISOString()\n      }\n    }];\n  }\n}\n\n// 4. Validation code postal (5 chiffres)\nconst cpRegex = /^[0-9]{5}$/;\nif (!cpRegex.test(input.code_postal.toString().trim())) {\n  return [{\n    json: {\n      valid: false,\n      error_code: 'VALIDATION_CODE_POSTAL_INVALID',\n      error_message: 'Code postal invalide (5 chiffres attendus)',\n      timestamp: new Date().toISOString()\n    }\n  }];\n}\n\n// 5. Sanitization des données\nconst sanitize = (str) => {\n  if (!str) return '';\n  return str.toString().trim()\n    .replace(/<[^>]*>/g, '')\n    .replace(/[<>\"'&]/g, '');\n};\n\n// 6. Générer ID unique\nconst leadId = `LEAD-${Date.now()}-${Math.random().toString(36).substr(2, 9).toUpperCase()}`;\n\n// 7. Date de suppression prévue (+3 ans)\nconst dateSuppressionPrevue = new Date();\ndateSuppressionPrevue.setFullYear(dateSuppressionPrevue.getFullYear() + 3);\n\n// 8. Types de travaux valides\nconst typesTravauxValides = [\n  'plomberie', 'electricite', 'menuiserie', 'peinture',\n  'chauffage', 'serrurerie', 'carrelage', 'maconnerie',\n  'couverture', 'autre'\n];\nconst typeTravaux = sanitize(input.type_travaux).toLowerCase().replace(/[éè]/g, 'e').replace(/\\s+/g, '_');\nconst typeTravauxValide = typesTravauxValides.includes(typeTravaux) ? typeTravaux : 'autre';\n\n// 9. Retourner données validées\nreturn [{\n  json: {\n    valid: true,\n    lead_id: leadId,\n    \n    // Données personnelles\n    nom: sanitize(input.nom).toUpperCase(),\n    prenom: sanitize(input.prenom),\n    email: sanitize(input.email).toLowerCase(),\n    telephone: sanitize(input.telephone),\n    \n    // Données chantier\n    adresse_chantier: sanitize(input.adresse_chantier),\n    code_postal: sanitize(input.code_postal),\n    type_travaux: typeTravauxValide,\n    description: sanitize(input.description || '').substring(0, 500),\n    urgence: ['normale', 'urgente', 'tres_urgente'].includes(input.urgence) ? input.urgence : 'normale',\n    \n    // RGPD\n    consentement_rgpd: true,\n    date_consentement: new Date().toISOString(),\n    source: sanitize(input.source || 'site_web'),\n    date_creation: new Date().toISOString(),\n    date_suppression_prevue: dateSuppressionPrevue.toISOString(),\n    statut: 'Nouveau',\n    opposition_prospection: input.opposition_prospection === true,\n    \n    // Métadonnées\n    workflow_context: {\n      workflow_name: 'artisan-crm-demande-devis-v1.0',\n      execution_id: $execution.id,\n      processed_at: new Date().toISOString()\n    }\n  }\n}];"
+      },
+      "id": "code-validation",
+      "name": "Validation RGPD",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "condition-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-consent",
+      "name": "Consentement OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "getAll",
+        "databaseId": {
+          "__rl": true,
+          "value": "={{ $env.NOTION_DB_DEVIS_ARTISAN }}",
+          "mode": "id"
+        },
+        "returnAll": false,
+        "limit": 1,
+        "filterType": "formula",
+        "filters": {
+          "property": "Email",
+          "email": {
+            "equals": "={{ $json.email }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "notion-dedup",
+      "name": "Déduplication Notion",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [900, 200],
+      "credentials": {
+        "notionApi": {
+          "id": "notion-credentials",
+          "name": "Notion API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Vérifier si le lead existe déjà (déduplication)\nconst results = $input.all();\nconst validationData = $('Validation RGPD').first().json;\n\n// Si résultat vide ou pas de pages = nouveau lead\nconst isDuplicate = results.length > 0 && results[0].json && results[0].json.id;\n\nreturn [{\n  json: {\n    ...validationData,\n    is_duplicate: isDuplicate,\n    existing_id: isDuplicate ? results[0].json.id : null\n  }\n}];"
+      },
+      "id": "code-dedup-check",
+      "name": "Check Doublon",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "condition-not-duplicate",
+              "leftValue": "={{ $json.is_duplicate }}",
+              "rightValue": false,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-not-duplicate",
+      "name": "Nouveau Lead?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1340, 200]
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "create",
+        "databaseId": {
+          "__rl": true,
+          "value": "={{ $env.NOTION_DB_DEVIS_ARTISAN }}",
+          "mode": "id"
+        },
+        "propertiesUi": {
+          "propertyValues": [
+            { "key": "Lead ID|rich_text", "textContent": "={{ $json.lead_id }}" },
+            { "key": "Client|title", "textContent": "={{ $json.nom }} {{ $json.prenom }}" },
+            { "key": "Email|email", "emailValue": "={{ $json.email }}" },
+            { "key": "Téléphone|phone_number", "phoneValue": "={{ $json.telephone }}" },
+            { "key": "Adresse Chantier|rich_text", "textContent": "={{ $json.adresse_chantier }}" },
+            { "key": "Code Postal|rich_text", "textContent": "={{ $json.code_postal }}" },
+            { "key": "Type Travaux|select", "selectValue": "={{ $json.type_travaux }}" },
+            { "key": "Description|rich_text", "textContent": "={{ $json.description }}" },
+            { "key": "Urgence|select", "selectValue": "={{ $json.urgence }}" },
+            { "key": "Statut|status", "statusValue": "Nouveau" },
+            { "key": "Date Consentement RGPD|date", "dateValue": "={{ $json.date_consentement }}" },
+            { "key": "Date Suppression Prévue|date", "dateValue": "={{ $json.date_suppression_prevue }}" },
+            { "key": "Opposition Prospection|checkbox", "checkboxValue": "={{ $json.opposition_prospection }}" },
+            { "key": "Source|select", "selectValue": "={{ $json.source }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "notion-create",
+      "name": "Créer Lead Notion",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [1560, 100],
+      "credentials": {
+        "notionApi": {
+          "id": "notion-credentials",
+          "name": "Notion API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Validation RGPD').item.json.email }}",
+        "subject": "Confirmation de votre demande de devis - {{ $env.ARTISAN_NOM_ENTREPRISE }}",
+        "emailType": "html",
+        "message": "<!DOCTYPE html>\n<html>\n<head>\n  <meta charset=\"UTF-8\">\n  <style>\n    body { font-family: Arial, sans-serif; color: #333; line-height: 1.6; }\n    .header { background: #2563eb; color: white; padding: 20px; text-align: center; }\n    .content { padding: 30px; max-width: 600px; margin: 0 auto; }\n    .devis-box { background: #f0f9ff; border-left: 4px solid #2563eb; padding: 20px; margin: 20px 0; }\n    .footer { background: #f5f5f5; padding: 20px; font-size: 12px; color: #666; }\n    .rgpd { border-top: 1px solid #ddd; margin-top: 20px; padding-top: 15px; font-size: 11px; }\n  </style>\n</head>\n<body>\n  <div class=\"header\">\n    <h1>Demande de Devis Reçue</h1>\n  </div>\n  <div class=\"content\">\n    <p>Bonjour {{ $('Validation RGPD').item.json.prenom }},</p>\n    \n    <p>Nous avons bien reçu votre demande de devis et nous vous en remercions.</p>\n    \n    <div class=\"devis-box\">\n      <p><strong>Référence :</strong> {{ $('Validation RGPD').item.json.lead_id }}</p>\n      <p><strong>Type de travaux :</strong> {{ $('Validation RGPD').item.json.type_travaux }}</p>\n      <p><strong>Adresse du chantier :</strong> {{ $('Validation RGPD').item.json.adresse_chantier }}, {{ $('Validation RGPD').item.json.code_postal }}</p>\n      <p><strong>Urgence :</strong> {{ $('Validation RGPD').item.json.urgence }}</p>\n    </div>\n    \n    <p>Nous étudions votre demande et reviendrons vers vous rapidement avec un devis détaillé.</p>\n    \n    <p>Cordialement,<br>\n    <strong>{{ $env.ARTISAN_NOM_ENTREPRISE }}</strong><br>\n    {{ $env.ARTISAN_TELEPHONE }}<br>\n    {{ $env.ARTISAN_EMAIL }}</p>\n    \n    <div class=\"rgpd\">\n      <p><strong>Informations RGPD</strong></p>\n      <p>Conformément au RGPD, vous disposez des droits d'accès, rectification, effacement, opposition et portabilité sur vos données personnelles.</p>\n      <p>Pour exercer ces droits : {{ $env.ARTISAN_EMAIL_RGPD }}</p>\n      <p>Référence consentement : {{ $('Validation RGPD').item.json.lead_id }} du {{ $('Validation RGPD').item.json.date_consentement }}</p>\n      <p>Conservation prévue : 3 ans (jusqu'au {{ $('Validation RGPD').item.json.date_suppression_prevue }})</p>\n    </div>\n  </div>\n  <div class=\"footer\">\n    <p>Cet email a été envoyé automatiquement suite à votre demande de devis.</p>\n  </div>\n</body>\n</html>",
+        "options": {
+          "replyTo": "={{ $env.ARTISAN_EMAIL }}"
+        }
+      },
+      "id": "gmail-confirmation",
+      "name": "Email Confirmation",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [1780, 100],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "gmail-credentials",
+          "name": "Gmail OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": true,\n  \"message\": \"Votre demande de devis a été enregistrée avec succès.\",\n  \"reference\": \"{{ $('Validation RGPD').item.json.lead_id }}\",\n  \"rgpd\": {\n    \"consentement_enregistre\": true,\n    \"date_consentement\": \"{{ $('Validation RGPD').item.json.date_consentement }}\",\n    \"duree_conservation\": \"3 ans\",\n    \"contact_rgpd\": \"{{ $env.ARTISAN_EMAIL_RGPD }}\"\n  }\n}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              { "name": "Content-Type", "value": "application/json; charset=utf-8" }
+            ]
+          }
+        }
+      },
+      "id": "respond-success",
+      "name": "Réponse Succès",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2000, 100]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": true,\n  \"message\": \"Votre demande a déjà été enregistrée. Nous vous recontacterons rapidement.\",\n  \"duplicate\": true\n}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              { "name": "Content-Type", "value": "application/json; charset=utf-8" }
+            ]
+          }
+        }
+      },
+      "id": "respond-duplicate",
+      "name": "Réponse Doublon",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1560, 320]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "log-refus",
+              "name": "log_rgpd",
+              "value": "={{ JSON.stringify({ action: 'REFUS_CONSENTEMENT', error_code: $json.error_code, error_message: $json.error_message, timestamp: $json.timestamp, workflow: 'artisan-crm-demande-devis-v1.0', execution_id: $execution.id }) }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-refus",
+      "name": "Log Refus RGPD",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [900, 420]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": false,\n  \"error\": \"{{ $('Validation RGPD').item.json.error_message }}\",\n  \"code\": \"VALIDATION_FAILED\",\n  \"rgpd\": {\n    \"donnees_conservees\": false,\n    \"contact_rgpd\": \"{{ $env.ARTISAN_EMAIL_RGPD }}\"\n  }\n}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [
+              { "name": "Content-Type", "value": "application/json; charset=utf-8" }
+            ]
+          }
+        }
+      },
+      "id": "respond-error",
+      "name": "Réponse Erreur",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1120, 420]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "success-log",
+              "name": "log_success",
+              "value": "={{ JSON.stringify({ action: 'LEAD_CREATED', lead_id: $('Validation RGPD').item.json.lead_id, email_masked: $('Validation RGPD').item.json.email.replace(/(.{2}).*(@.*)/, '$1***$2'), type_travaux: $('Validation RGPD').item.json.type_travaux, notion_page_id: $('Créer Lead Notion').item.json.id, email_sent: true, timestamp: new Date().toISOString(), workflow: 'artisan-crm-demande-devis-v1.0' }) }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-success-log",
+      "name": "Log Succès",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [2000, -20]
+    }
+  ],
+  "connections": {
+    "Webhook Demande Devis": {
+      "main": [[{ "node": "Validation RGPD", "type": "main", "index": 0 }]]
+    },
+    "Validation RGPD": {
+      "main": [[{ "node": "Consentement OK?", "type": "main", "index": 0 }]]
+    },
+    "Consentement OK?": {
+      "main": [
+        [{ "node": "Déduplication Notion", "type": "main", "index": 0 }],
+        [{ "node": "Log Refus RGPD", "type": "main", "index": 0 }]
+      ]
+    },
+    "Déduplication Notion": {
+      "main": [[{ "node": "Check Doublon", "type": "main", "index": 0 }]]
+    },
+    "Check Doublon": {
+      "main": [[{ "node": "Nouveau Lead?", "type": "main", "index": 0 }]]
+    },
+    "Nouveau Lead?": {
+      "main": [
+        [{ "node": "Créer Lead Notion", "type": "main", "index": 0 }],
+        [{ "node": "Réponse Doublon", "type": "main", "index": 0 }]
+      ]
+    },
+    "Créer Lead Notion": {
+      "main": [[{ "node": "Email Confirmation", "type": "main", "index": 0 }]]
+    },
+    "Email Confirmation": {
+      "main": [
+        [{ "node": "Log Succès", "type": "main", "index": 0 }],
+        [{ "node": "Réponse Succès", "type": "main", "index": 0 }]
+      ]
+    },
+    "Log Refus RGPD": {
+      "main": [[{ "node": "Réponse Erreur", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "staticData": null,
+  "tags": [
+    { "id": "tag-artisan", "name": "artisan" },
+    { "id": "tag-rgpd", "name": "rgpd" },
+    { "id": "tag-crm", "name": "crm" }
+  ],
+  "pinData": {},
+  "versionId": "1.0.0"
+}
