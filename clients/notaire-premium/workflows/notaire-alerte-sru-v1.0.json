@@ -1,0 +1,49 @@
+{
+  "name": "Calculateur et Alerte Délai SRU",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "calcul-sru",
+        "options": {}
+      },
+      "name": "Réception Date Signature",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [100, 300]
+    },
+    {
+      "parameters": {
+        "value": "={{ $json.date_signature }}",
+        "dataPropertyName": "date_fin_sru",
+        "custom": true,
+        "number": 10,
+        "unit": "days"
+      },
+      "name": "Calcul +10 Jours",
+      "type": "n8n-nodes-base.dateTime",
+      "typeVersion": 2,
+      "position": [320, 300]
+    },
+    {
+      "parameters": {
+        "fromEmail": "etude@notaire.fr",
+        "toEmail": "clerc-en-charge@notaire.fr",
+        "subject": "⚠️ ALERTE : Fin de délai SRU - Dossier {{ $json.dossier_nom }}",
+        "html": "<div><strong>Rappel de sécurité :</strong><br>Le délai de rétractation pour le dossier {{ $json.dossier_nom }} expire le : <strong>{{ $json.date_fin_sru }}</strong>.<br>Veuillez vérifier que tous les accusés de réception sont bien classés.</div>"
+      },
+      "name": "Alerte Clerc de Notaire",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [540, 300]
+    }
+  ],
+  "connections": {
+    "Réception Date Signature": {
+      "main": [[{ "node": "Calcul +10 Jours", "type": "main", "index": 0 }]]
+    },
+    "Calcul +10 Jours": {
+      "main": [[{ "node": "Alerte Clerc de Notaire", "type": "main", "index": 0 }]]
+    }
+  }
+}
