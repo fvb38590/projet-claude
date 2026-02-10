@@ -1,0 +1,782 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Pack Industrie 4.0 — L'Usine Intelligente | Vazbolota Consulting</title>
+  <meta name="description" content="Automatisez votre atelier en 1 journée. 5 workflows n8n + 3 bases Notion prêtes à l'emploi. Zéro panne, zéro rupture, zéro retard.">
+  <style>
+    :root {
+      --bg: #071024;
+      --surface: #0f1724;
+      --blue: #3aa0ff;
+      --deep: #1180e6;
+      --muted: #98a0b3;
+      --text: #e6eef8;
+      --orange: #f59e0b;
+      --green: #10b981;
+      --radius: 12px;
+      --container: 1100px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      color: var(--text);
+      background: var(--bg);
+      -webkit-font-smoothing: antialiased;
+      line-height: 1.6;
+    }
+
+    .container { max-width: var(--container); margin: 0 auto; padding: 0 2rem; }
+
+    /* ── Header ── */
+    .site-header {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+      background: rgba(7,16,36,0.92);
+      backdrop-filter: blur(12px);
+    }
+    .site-header .container {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 60px;
+    }
+    .brand {
+      font-weight: 700;
+      font-size: 1.1rem;
+      color: var(--blue);
+      text-decoration: none;
+    }
+    .nav { display: flex; align-items: center; gap: 1.25rem; }
+    .nav a {
+      color: var(--text);
+      text-decoration: none;
+      opacity: 0.85;
+      font-size: 0.9rem;
+      transition: opacity 0.2s;
+    }
+    .nav a:hover { opacity: 1; }
+    .nav .cta-nav {
+      padding: 0.4rem 0.9rem;
+      border-radius: 8px;
+      background: var(--deep);
+      color: #fff;
+      opacity: 1;
+      font-weight: 600;
+    }
+    .nav .cta-nav:hover { background: var(--blue); }
+
+    /* ── Buttons ── */
+    .btn {
+      display: inline-block;
+      padding: 0.8rem 1.6rem;
+      border-radius: 8px;
+      text-decoration: none;
+      border: 1px solid transparent;
+      font-weight: 600;
+      font-size: 1rem;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn.primary {
+      background: var(--deep);
+      color: #fff;
+    }
+    .btn.primary:hover { background: var(--blue); }
+    .btn.ghost {
+      background: transparent;
+      color: var(--blue);
+      border-color: rgba(255,255,255,0.08);
+    }
+    .btn.ghost:hover { border-color: var(--blue); }
+    .btn.large {
+      padding: 1rem 2.4rem;
+      font-size: 1.15rem;
+    }
+    .btn.orange {
+      background: var(--orange);
+      color: #071024;
+    }
+    .btn.orange:hover { background: #fbbf24; }
+
+    /* ── Section base ── */
+    .section { padding: 5rem 0; }
+    .section-title {
+      font-size: 2rem;
+      margin-bottom: 0.5rem;
+      text-align: center;
+    }
+    .section-subtitle {
+      color: var(--muted);
+      text-align: center;
+      margin-bottom: 3rem;
+      max-width: 700px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    /* ── Hero ── */
+    .hero {
+      padding: 6rem 0 5rem;
+      background: linear-gradient(180deg, #071427 0%, #071024 100%);
+      text-align: center;
+    }
+    .hero-badge {
+      display: inline-block;
+      padding: 0.35rem 1rem;
+      border-radius: 20px;
+      background: rgba(245,158,11,0.12);
+      color: var(--orange);
+      font-size: 0.85rem;
+      font-weight: 600;
+      margin-bottom: 1.5rem;
+      border: 1px solid rgba(245,158,11,0.2);
+    }
+    .hero h1 {
+      font-size: 2.8rem;
+      line-height: 1.15;
+      margin-bottom: 1rem;
+      max-width: 800px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+    .hero h1 .accent { color: var(--blue); }
+    .hero .lead {
+      color: var(--muted);
+      font-size: 1.2rem;
+      max-width: 650px;
+      margin: 0 auto 2rem;
+    }
+    .hero-ctas { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; }
+
+    /* ── Problème ── */
+    .problem { background: var(--surface); }
+    .pain-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1.5rem;
+      margin-bottom: 2.5rem;
+    }
+    .pain-card {
+      background: var(--bg);
+      border-radius: var(--radius);
+      padding: 1.5rem;
+      border: 1px solid rgba(255,255,255,0.04);
+    }
+    .pain-card .emoji {
+      font-size: 2rem;
+      margin-bottom: 0.75rem;
+      display: block;
+    }
+    .pain-card .quote {
+      font-style: italic;
+      color: var(--orange);
+      margin-bottom: 0.5rem;
+      font-size: 0.95rem;
+    }
+    .pain-card p { color: var(--muted); font-size: 0.9rem; }
+    .cost-callout {
+      text-align: center;
+      padding: 1.5rem 2rem;
+      background: rgba(245,158,11,0.08);
+      border: 1px solid rgba(245,158,11,0.2);
+      border-radius: var(--radius);
+      color: var(--orange);
+      font-size: 1.1rem;
+      font-weight: 600;
+    }
+    .cost-callout span { font-size: 1.4rem; }
+
+    /* ── Piliers ── */
+    .pillars-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1.5rem;
+    }
+    .pillar-card {
+      background: var(--surface);
+      border-radius: var(--radius);
+      padding: 2rem 1.5rem;
+      border: 1px solid rgba(255,255,255,0.04);
+      transition: border-color 0.3s;
+    }
+    .pillar-card:hover { border-color: rgba(58,160,255,0.2); }
+    .pillar-icon {
+      font-size: 2.5rem;
+      margin-bottom: 1rem;
+      display: block;
+    }
+    .pillar-card h3 {
+      font-size: 1.2rem;
+      margin-bottom: 0.75rem;
+      color: var(--text);
+    }
+    .pillar-card .desc {
+      color: var(--muted);
+      font-size: 0.9rem;
+      margin-bottom: 1.25rem;
+      line-height: 1.5;
+    }
+    .pillar-benefits {
+      list-style: none;
+      margin-bottom: 1.25rem;
+    }
+    .pillar-benefits li {
+      position: relative;
+      padding-left: 1.5rem;
+      margin-bottom: 0.5rem;
+      font-size: 0.9rem;
+      color: var(--green);
+    }
+    .pillar-benefits li::before {
+      content: "\2713";
+      position: absolute;
+      left: 0;
+      font-weight: 700;
+    }
+    .pillar-included {
+      padding: 1rem;
+      background: rgba(58,160,255,0.06);
+      border-radius: 8px;
+      font-size: 0.82rem;
+      color: var(--muted);
+      border-left: 3px solid var(--deep);
+    }
+
+    /* ── Contenu du pack ── */
+    .pack-content { background: var(--surface); }
+    .pack-table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--bg);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .pack-table th,
+    .pack-table td {
+      text-align: left;
+      padding: 1rem 1.25rem;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+    }
+    .pack-table th {
+      background: rgba(58,160,255,0.08);
+      font-weight: 600;
+      color: var(--blue);
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .pack-table td:first-child { font-weight: 600; }
+    .pack-table td:last-child { color: var(--muted); }
+    .pack-table tr:last-child td { border-bottom: none; }
+
+    /* ── Stack technique ── */
+    .stack-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1.5rem;
+      margin-bottom: 2rem;
+    }
+    .stack-card {
+      background: var(--surface);
+      border-radius: var(--radius);
+      padding: 2rem 1rem;
+      text-align: center;
+      border: 1px solid rgba(255,255,255,0.04);
+    }
+    .stack-icon { font-size: 2.5rem; margin-bottom: 0.75rem; display: block; }
+    .stack-card h4 { margin-bottom: 0.4rem; font-size: 1rem; }
+    .stack-card p { color: var(--muted); font-size: 0.82rem; }
+    .stack-note {
+      text-align: center;
+      color: var(--green);
+      font-weight: 600;
+      font-size: 1rem;
+    }
+
+    /* ── Tarif ── */
+    .pricing { background: var(--surface); }
+    .pricing-card {
+      max-width: 700px;
+      margin: 0 auto 3rem;
+      background: var(--bg);
+      border-radius: var(--radius);
+      padding: 3rem 2.5rem;
+      text-align: center;
+      border: 2px solid var(--deep);
+      position: relative;
+    }
+    .pricing-badge {
+      position: absolute;
+      top: -14px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--deep);
+      color: #fff;
+      padding: 0.3rem 1.2rem;
+      border-radius: 20px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .pricing-price {
+      font-size: 3.5rem;
+      font-weight: 800;
+      margin: 1rem 0 0.25rem;
+    }
+    .pricing-price .currency { font-size: 1.5rem; vertical-align: super; }
+    .pricing-price .ht { font-size: 1.2rem; color: var(--muted); font-weight: 400; }
+    .pricing-tagline {
+      color: var(--muted);
+      margin-bottom: 2rem;
+      font-size: 1rem;
+    }
+    .roi-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 2rem auto;
+      max-width: 600px;
+    }
+    .roi-table th,
+    .roi-table td {
+      text-align: left;
+      padding: 0.75rem 1rem;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+    }
+    .roi-table th {
+      color: var(--blue);
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .roi-table td:first-child { color: var(--text); }
+    .roi-table td:last-child { color: var(--green); font-weight: 600; text-align: right; }
+    .roi-table tr:last-child td { border-bottom: none; }
+    .comparison-note {
+      background: rgba(16,185,129,0.08);
+      border: 1px solid rgba(16,185,129,0.2);
+      border-radius: var(--radius);
+      padding: 1.25rem 1.5rem;
+      color: var(--muted);
+      font-size: 0.9rem;
+      max-width: 700px;
+      margin: 0 auto;
+      text-align: center;
+      line-height: 1.6;
+    }
+    .comparison-note strong { color: var(--green); }
+
+    /* ── Pour qui ── */
+    .audience-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 1.25rem;
+      max-width: 800px;
+      margin: 0 auto 2.5rem;
+    }
+    .audience-card {
+      background: var(--surface);
+      border-radius: var(--radius);
+      padding: 1.5rem;
+      border: 1px solid rgba(255,255,255,0.04);
+      display: flex;
+      gap: 1rem;
+      align-items: flex-start;
+    }
+    .audience-icon { font-size: 1.8rem; flex-shrink: 0; }
+    .audience-card h4 { margin-bottom: 0.3rem; font-size: 0.95rem; }
+    .audience-card p { color: var(--muted); font-size: 0.85rem; }
+    .not-erp {
+      max-width: 700px;
+      margin: 0 auto;
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.95rem;
+      padding: 1.5rem;
+      background: var(--surface);
+      border-radius: var(--radius);
+      border: 1px solid rgba(255,255,255,0.04);
+    }
+    .not-erp strong { color: var(--text); }
+
+    /* ── CTA final ── */
+    .cta-final {
+      background: linear-gradient(180deg, var(--bg) 0%, #071427 100%);
+      text-align: center;
+      padding: 5rem 0;
+    }
+    .cta-final h2 {
+      font-size: 2.2rem;
+      margin-bottom: 0.75rem;
+    }
+    .cta-final .lead {
+      color: var(--muted);
+      margin-bottom: 2rem;
+      font-size: 1.1rem;
+    }
+    .cta-final .btn { margin-bottom: 1.5rem; }
+    .reassurance {
+      display: flex;
+      gap: 2rem;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin-top: 1rem;
+    }
+    .reassurance span {
+      color: var(--muted);
+      font-size: 0.85rem;
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+    .reassurance .check { color: var(--green); font-weight: 700; }
+
+    /* ── Footer ── */
+    .site-footer {
+      border-top: 1px solid rgba(255,255,255,0.03);
+      padding: 1.5rem 0;
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.82rem;
+    }
+
+    /* ── Responsive 900px ── */
+    @media (max-width: 900px) {
+      .pain-grid,
+      .pillars-grid { grid-template-columns: 1fr; }
+      .stack-grid { grid-template-columns: repeat(2, 1fr); }
+      .audience-grid { grid-template-columns: 1fr; }
+      .hero h1 { font-size: 2rem; }
+      .section { padding: 3.5rem 0; }
+      .nav { gap: 0.75rem; }
+      .nav a { font-size: 0.82rem; }
+    }
+
+    /* ── Responsive 480px ── */
+    @media (max-width: 480px) {
+      .container { padding: 0 1rem; }
+      .hero { padding: 3.5rem 0 3rem; }
+      .hero h1 { font-size: 1.5rem; }
+      .hero .lead { font-size: 1rem; }
+      .section-title { font-size: 1.5rem; }
+      .pricing-price { font-size: 2.5rem; }
+      .pricing-card { padding: 2rem 1.25rem; }
+      .stack-grid { grid-template-columns: 1fr 1fr; }
+      .reassurance { flex-direction: column; align-items: center; gap: 0.75rem; }
+      .btn.large { padding: 0.85rem 1.8rem; font-size: 1rem; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ══ HEADER ══ -->
+  <header class="site-header">
+    <div class="container">
+      <a href="#" class="brand">Vazbolota Consulting</a>
+      <nav class="nav">
+        <a href="#probleme">Problème</a>
+        <a href="#piliers">Solution</a>
+        <a href="#tarif">Tarif</a>
+        <a href="#pour-qui">Pour qui</a>
+        <a href="#commander" class="cta-nav">Commander</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+
+    <!-- ══ HERO ══ -->
+    <section class="hero">
+      <div class="container">
+        <span class="hero-badge">Pack Industrie 4.0</span>
+        <h1>Zéro Panne. Zéro Rupture.<br><span class="accent">Zéro Retard.</span></h1>
+        <p class="lead">Automatisez votre atelier en 1 journée. 5 workflows n8n + 3 bases Notion prêtes à l'emploi.</p>
+        <div class="hero-ctas">
+          <a href="#commander" class="btn primary large">Commander le pack — 149 € HT</a>
+          <a href="#piliers" class="btn ghost">Découvrir la solution</a>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══ PROBLÈME ══ -->
+    <section id="probleme" class="section problem">
+      <div class="container">
+        <h2 class="section-title">Le problème que vous connaissez trop bien</h2>
+        <p class="section-subtitle">Vous gérez une TPE/PME industrielle. Chaque matin, c'est la même incertitude.</p>
+        <div class="pain-grid">
+          <div class="pain-card">
+            <span class="emoji">📦</span>
+            <div class="quote">"On a encore du stock de PLA-042 ?"</div>
+            <p>Personne ne sait vraiment. Le fichier Excel date de jeudi dernier.</p>
+          </div>
+          <div class="pain-card">
+            <span class="emoji">🔧</span>
+            <div class="quote">"La CNC, c'est quand la prochaine révision ?"</div>
+            <p>Le post-it sur le tableau a disparu.</p>
+          </div>
+          <div class="pain-card">
+            <span class="emoji">📋</span>
+            <div class="quote">"Le client Durand, on livre quand ?"</div>
+            <p>L'OF traîne quelque part entre la prépa et le contrôle qualité.</p>
+          </div>
+        </div>
+        <div class="cost-callout">
+          <span>5 000 à 20 000 €/jour</span><br>
+          Le coût d'un arrêt machine non planifié pour une PME industrielle
+          <br><small style="opacity:0.7">(source : cabinet McKinsey)</small>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══ 3 PILIERS ══ -->
+    <section id="piliers" class="section">
+      <div class="container">
+        <h2 class="section-title">La solution : 3 piliers, 5 workflows, 0 paperasse</h2>
+        <p class="section-subtitle">Un système d'automatisation modulaire qui se greffe sur vos outils existants.</p>
+        <div class="pillars-grid">
+
+          <!-- Pilier 1 -->
+          <div class="pillar-card">
+            <span class="pillar-icon">📦</span>
+            <h3>Pilier 1 — Gestion des stocks</h3>
+            <p class="desc">Le workflow surveille vos niveaux de matières premières en continu. Quand un seuil critique est atteint, il calcule la quantité à commander et envoie le bon de commande au fournisseur.</p>
+            <ul class="pillar-benefits">
+              <li>2h/semaine récupérées sur les inventaires</li>
+              <li>5 000 à 15 000 € préservés par rupture évitée</li>
+              <li>Commande envoyée avant le stock à zéro</li>
+            </ul>
+            <div class="pillar-included">Inclus : base Notion "Stock Matières" (17 champs), 3 vues pré-configurées, code node n8n.</div>
+          </div>
+
+          <!-- Pilier 2 -->
+          <div class="pillar-card">
+            <span class="pillar-icon">🏭</span>
+            <h3>Pilier 2 — Suivi de production</h3>
+            <p class="desc">3 workflows interconnectés : alertes échéances (🔴🟠🟢), vérification pré-production croisée stock/OF, notifications de transitions automatiques.</p>
+            <ul class="pillar-benefits">
+              <li>Retards de livraison réduits de 40 à 60%</li>
+              <li>Zéro appel de relance client à gérer</li>
+              <li>3 à 5h/semaine de coordination en moins</li>
+            </ul>
+            <div class="pillar-included">Inclus : base Notion "Ordres de Fabrication" (14 champs + formules), 2 code nodes n8n, guide triggers.</div>
+          </div>
+
+          <!-- Pilier 3 -->
+          <div class="pillar-card">
+            <span class="pillar-icon">⚙️</span>
+            <h3>Pilier 3 — Maintenance préventive</h3>
+            <p class="desc">Chaque matin à 7h, le workflow analyse votre parc machines, calcule les jours avant révision et envoie un rapport priorisé par criticité.</p>
+            <ul class="pillar-benefits">
+              <li>3 à 8x moins cher que la maintenance curative</li>
+              <li>Durée de vie équipements prolongée de 20 à 40%</li>
+              <li>1 panne évitée/trimestre = 5 000 à 20 000 € économisés</li>
+            </ul>
+            <div class="pillar-included">Inclus : base Notion "Parc Machines" (14 champs), 4 vues pré-configurées, code node n8n.</div>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ══ CONTENU DU PACK ══ -->
+    <section id="contenu" class="section pack-content">
+      <div class="container">
+        <h2 class="section-title">Ce que contient le pack</h2>
+        <p class="section-subtitle">Tout est prêt à l'emploi. Vous copiez, vous collez, c'est opérationnel.</p>
+        <table class="pack-table">
+          <thead>
+            <tr>
+              <th>Élément</th>
+              <th>Détail</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Workflows n8n</td>
+              <td>5 workflows complets avec logique métier</td>
+            </tr>
+            <tr>
+              <td>Code nodes JavaScript</td>
+              <td>4 scripts prêts à copier (extraction Notion, calculs, alertes)</td>
+            </tr>
+            <tr>
+              <td>Bases Notion</td>
+              <td>3 bases de données (45 propriétés au total) avec formules automatiques</td>
+            </tr>
+            <tr>
+              <td>Vues Notion</td>
+              <td>12+ vues pré-configurées (tableaux, kanban, calendrier)</td>
+            </tr>
+            <tr>
+              <td>Guide d'installation</td>
+              <td>Configuration pas à pas, de la création Notion au premier test</td>
+            </tr>
+            <tr>
+              <td>Guide des triggers</td>
+              <td>Stratégie webhook / cron / polling expliquée et comparée</td>
+            </tr>
+            <tr>
+              <td>Conformité RGPD</td>
+              <td>Masquage des emails dans les logs, traçabilité par ID unique, footer légal</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ══ STACK TECHNIQUE ══ -->
+    <section id="stack" class="section">
+      <div class="container">
+        <h2 class="section-title">Stack technique</h2>
+        <p class="section-subtitle">Des outils que vous utilisez peut-être déjà. Aucune compétence en développement requise.</p>
+        <div class="stack-grid">
+          <div class="stack-card">
+            <span class="stack-icon">📝</span>
+            <h4>Notion</h4>
+            <p>3 bases de données centrales (gratuit ou plan Team)</p>
+          </div>
+          <div class="stack-card">
+            <span class="stack-icon">⚡</span>
+            <h4>n8n</h4>
+            <p>Orchestration des 5 workflows (self-hosted gratuit ou Cloud)</p>
+          </div>
+          <div class="stack-card">
+            <span class="stack-icon">📧</span>
+            <h4>Email / Gmail</h4>
+            <p>Alertes automatiques vers fournisseurs, équipe, clients</p>
+          </div>
+          <div class="stack-card">
+            <span class="stack-icon">💬</span>
+            <h4>Slack <small style="color:var(--muted)">(optionnel)</small></h4>
+            <p>Alertes urgentes en temps réel</p>
+          </div>
+        </div>
+        <p class="stack-note">Chaque script est documenté ligne par ligne. Vous copiez, vous collez, vous configurez.</p>
+      </div>
+    </section>
+
+    <!-- ══ TARIF ══ -->
+    <section id="tarif" class="section pricing">
+      <div class="container">
+        <h2 class="section-title">Tarif</h2>
+        <p class="section-subtitle">Rentabilisé dès la première panne évitée.</p>
+
+        <div class="pricing-card">
+          <span class="pricing-badge">Licence unique — Sans abonnement</span>
+          <div class="pricing-price">
+            <span class="currency">€</span>149<span class="ht"> HT</span>
+          </div>
+          <p class="pricing-tagline">Pas de frais mensuels. Pas de surcoût par utilisateur. Le pack est à vous.</p>
+          <a href="#commander" class="btn primary large">Commander maintenant</a>
+        </div>
+
+        <table class="roi-table">
+          <thead>
+            <tr>
+              <th>Scénario</th>
+              <th>Économie estimée</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>1 rupture de stock évitée</td>
+              <td>5 000 à 15 000 €</td>
+            </tr>
+            <tr>
+              <td>1 panne machine anticipée</td>
+              <td>5 000 à 20 000 €</td>
+            </tr>
+            <tr>
+              <td>Heures de suivi manuel éliminées</td>
+              <td>~900 €/mois</td>
+            </tr>
+            <tr>
+              <td>1 retard client évité</td>
+              <td>Relation préservée</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="comparison-note">
+          Un logiciel <strong>GMAO</strong> coûte 200 à 800 €/mois. Un <strong>ERP industriel</strong>, 500 à 2 000 €/mois.<br>
+          Ici, vous obtenez l'essentiel pour <strong>le prix d'une heure de maintenance curative</strong>.
+        </div>
+      </div>
+    </section>
+
+    <!-- ══ POUR QUI ══ -->
+    <section id="pour-qui" class="section">
+      <div class="container">
+        <h2 class="section-title">Pour qui est ce pack ?</h2>
+        <p class="section-subtitle">Conçu pour les TPE/PME industrielles de 3 à 50 salariés.</p>
+        <div class="audience-grid">
+          <div class="audience-card">
+            <span class="audience-icon">🏭</span>
+            <div>
+              <h4>Ateliers de fabrication</h4>
+              <p>Usinage, tôlerie, injection, assemblage</p>
+            </div>
+          </div>
+          <div class="audience-card">
+            <span class="audience-icon">👷</span>
+            <div>
+              <h4>Responsables de production</h4>
+              <p>Qui passent plus de temps à coordonner qu'à produire</p>
+            </div>
+          </div>
+          <div class="audience-card">
+            <span class="audience-icon">📊</span>
+            <div>
+              <h4>Dirigeants de PME industrielles</h4>
+              <p>Qui veulent structurer sans investir dans un ERP</p>
+            </div>
+          </div>
+          <div class="audience-card">
+            <span class="audience-icon">🔧</span>
+            <div>
+              <h4>Responsables maintenance</h4>
+              <p>Fatigués des carnets papier et des post-it</p>
+            </div>
+          </div>
+        </div>
+        <div class="not-erp">
+          Ce n'est pas un ERP. Ce n'est pas un logiciel à installer.<br>
+          C'est un <strong>système d'automatisation modulaire</strong> que vous greffez sur des outils que vous utilisez déjà.<br>
+          Vous gardez le contrôle total sur vos données et vos processus.
+        </div>
+      </div>
+    </section>
+
+    <!-- ══ CTA FINAL ══ -->
+    <section id="commander" class="section cta-final">
+      <div class="container">
+        <h2>Prêt à automatiser votre atelier ?</h2>
+        <p class="lead">Pack Industrie 4.0 — 149 € HT · Livraison immédiate · Sans abonnement</p>
+        <a href="mailto:contact@vazbolota.com?subject=Commande%20Pack%20Industrie%204.0&body=Bonjour%2C%0A%0AJe%20souhaite%20commander%20le%20Pack%20Industrie%204.0%20(149%E2%82%AC%20HT).%0A%0AEntreprise%20%3A%20%0ANom%20%3A%20%0AT%C3%A9l%C3%A9phone%20%3A%20%0A%0AMerci" class="btn orange large">Commander le pack — 149 € HT</a>
+        <div class="reassurance">
+          <span><span class="check">&#10003;</span> Sans abonnement</span>
+          <span><span class="check">&#10003;</span> Livraison immédiate</span>
+          <span><span class="check">&#10003;</span> Licence à vie</span>
+          <span><span class="check">&#10003;</span> Conforme RGPD</span>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ══ FOOTER ══ -->
+  <footer class="site-footer">
+    <div class="container">
+      &copy; <span id="year"></span> Vazbolota Consulting — Pack Industrie 4.0<br>
+      <small>Données traitées conformément au RGPD. Aucune donnée personnelle collectée sur cette page.</small>
+    </div>
+  </footer>
+
+  <script>document.getElementById('year').textContent = new Date().getFullYear();</script>
+</body>
+</html>
