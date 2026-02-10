@@ -1,0 +1,60 @@
+{
+  "name": "Chasseur de Pièces Manquantes Notaire",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "interval": 7
+            }
+          ]
+        }
+      },
+      "name": "Chaque Lundi Matin",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [100, 300]
+    },
+    {
+      "parameters": {
+        "documentId": "ID_VOTRE_TABLEAU_DOSSIERS",
+        "sheetName": "Feuille1",
+        "filters": {
+          "conditions": [
+            {
+              "columnName": "Statut",
+              "operator": "equal",
+              "value": "Incomplet"
+            }
+          ]
+        }
+      },
+      "name": "Chercher Dossiers Incomplets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 3,
+      "position": [320, 300]
+    },
+    {
+      "parameters": {
+        "fromEmail": "etude@notaire.fr",
+        "toEmail": "={{ $json.email_client }}",
+        "subject": "⚠️ Documents manquants pour votre dossier immobilier",
+        "html": "<div>Bonjour {{ $json.nom_client }},<br><br>Sauf erreur de notre part, il nous manque encore les pièces suivantes pour finaliser votre dossier :<br><strong>{{ $json.pieces_manquantes }}</strong>.<br><br>Merci de nous les faire parvenir au plus vite.<br><br>Cordialement,<br>L'étude.</div>"
+      },
+      "name": "Envoi Relance Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [540, 300]
+    }
+  ],
+  "connections": {
+    "Chaque Lundi Matin": {
+      "main": [[{ "node": "Chercher Dossiers Incomplets", "type": "main", "index": 0 }]]
+    },
+    "Chercher Dossiers Incomplets": {
+      "main": [[{ "node": "Envoi Relance Email", "type": "main", "index": 0 }]]
+    }
+  }
+}

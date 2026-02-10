@@ -1,0 +1,57 @@
+{
+  "name": "Extraction IA de Compromis de Vente",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "webhook-notaire-extract",
+        "options": {}
+      },
+      "name": "Webhook Notaire",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o",
+        "messages": {
+          "messageValues": [
+            {
+              "message": "Extrait du compromis de vente suivant : 1. Noms des vendeurs 2. Noms des acquéreurs 3. Prix de vente 4. Adresse du bien 5. Date de signature prévue. Répond au format JSON pur."
+            }
+          ]
+        }
+      },
+      "name": "IA Analyse Document",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": "ID_GOOGLE_SHEET",
+        "sheetName": "Dossiers",
+        "valuesSend": "map",
+        "mappingValues": {
+          "Vendeur": "={{ $json.vendeur }}",
+          "Prix": "={{ $json.prix }}",
+          "Date": "={{ $json.date }}"
+        }
+      },
+      "name": "Mise à jour Tableau de Bord",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 3,
+      "position": [750, 300]
+    }
+  ],
+  "connections": {
+    "Webhook Notaire": {
+      "main": [[{ "node": "IA Analyse Document", "type": "main", "index": 0 }]]
+    },
+    "IA Analyse Document": {
+      "main": [[{ "node": "Mise à jour Tableau de Bord", "type": "main", "index": 0 }]]
+    }
+  }
+}
