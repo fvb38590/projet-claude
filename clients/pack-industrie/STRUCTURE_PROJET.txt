@@ -1,0 +1,25 @@
+Pack Industrie Automatisee - Vazbolota Consulting
+==================================================
+
+pack-industrie/
+│
+├── README.md                                    Presentation du pack, punchline, SEO
+├── STRUCTURE_PROJET.txt                         Ce fichier
+│
+├── 01-gestion-stocks/
+│   ├── notion-setup.md                          Config base Notion "Stock Matieres" (17 props)
+│   └── logic-n8n.js                             Code Node : filtrage + commande fournisseur
+│
+├── 02-suivi-production/
+│   ├── notion-of-config.md                      Config base Notion "Ordres de Fabrication" (14 props)
+│   ├── check-deadlines.js                       Code Node : alertes echeances OF (Urgent/Tendu)
+│   ├── stock-pre-check.js                       Code Node : cross-ref stocks avant production
+│   └── notif-logic.md                           Guide triggers (Webhook / Schedule / Polling)
+│
+└── 03-maintenance-preventive/
+    ├── notion-machinery-setup.md                Config base Notion "Parc Machines" (14 props)
+    └── preventive-logic.js                      Code Node : alertes revision + criticite
+
+==================================================
+3 modules | 3 bases Notion | 4 scripts n8n | 10 fichiers
+==================================================
