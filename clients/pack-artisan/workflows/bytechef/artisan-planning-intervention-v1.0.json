@@ -1,285 +1,274 @@
 {
-  "definition": {
-    "tasks": [
-      {
-        "name": "tryCatchGlobal",
-        "type": "flow-control/v1/try-catch",
-        "parameters": {
-          "tryTasks": [
-            {
-              "name": "validationDemande",
-              "type": "script/v1/javascript",
-              "parameters": {
-                "script": "function execute() {\n  var body = webhookTrigger.body;\n\n  // --- RGPD: Consentement ---\n  if (!body.consentement_rgpd || body.consentement_rgpd !== true) {\n    return {\n      valide: false,\n      erreur: 'RGPD_NO_CONSENT',\n      message: 'Le consentement RGPD est obligatoire pour traiter votre demande.'\n    };\n  }\n\n  // --- Champs obligatoires ---\n  var champsObligatoires = ['nom', 'prenom', 'email', 'telephone', 'date_intervention', 'heure_debut', 'duree_heures', 'adresse_chantier', 'type_travaux'];\n  var champsManquants = [];\n  for (var i = 0; i < champsObligatoires.length; i++) {\n    var champ = champsObligatoires[i];\n    if (!body[champ] || (typeof body[champ] === 'string' && body[champ].trim() === '')) {\n      champsManquants.push(champ);\n    }\n  }\n  if (champsManquants.length > 0) {\n    return {\n      valide: false,\n      erreur: 'CHAMPS_MANQUANTS',\n      message: 'Champs obligatoires manquants : ' + champsManquants.join(', ')\n    };\n  }\n\n  // --- Validation email ---\n  var emailRegex = /^[a-zA-Z0-9._%+\\-]+@[a-zA-Z0-9.\\-]+\\.[a-zA-Z]{2,}$/;\n  if (!emailRegex.test(body.email)) {\n    return {\n      valide: false,\n      erreur: 'EMAIL_INVALIDE',\n      message: 'Adresse email invalide : ' + body.email\n    };\n  }\n\n  // --- Validation telephone (format FR) ---\n  var telNormalise = body.telephone.replace(/[\\s.\\-()]/g, '');\n  var telRegex = /^(\\+33|0033|0)[1-9][0-9]{8}$/;\n  if (!telRegex.test(telNormalise)) {\n    return {\n      valide: false,\n      erreur: 'TELEPHONE_INVALIDE',\n      message: 'Numero de telephone invalide. Format attendu : 06 12 34 56 78 ou +33612345678'\n    };\n  }\n\n  // --- Validation date intervention ---\n  var dateIntervention = new Date(body.date_intervention + 'T00:00:00');\n  if (isNaN(dateIntervention.getTime())) {\n    return {\n      valide: false,\n      erreur: 'DATE_INVALIDE',\n      message: 'Format de date invalide. Utilisez YYYY-MM-DD.'\n    };\n  }\n\n  var aujourdhui = new Date();\n  aujourdhui.setHours(0, 0, 0, 0);\n  if (dateIntervention < aujourdhui) {\n    return {\n      valide: false,\n      erreur: 'DATE_PASSEE',\n      message: 'La date d intervention ne peut pas etre dans le passe.'\n    };\n  }\n\n  var maxDate = new Date(aujourdhui);\n  maxDate.setDate(maxDate.getDate() + 90);\n  if (dateIntervention > maxDate) {\n    return {\n      valide: false,\n      erreur: 'DATE_TROP_LOINTAINE',\n      message: 'La date d intervention ne peut pas depasser 90 jours a compter d aujourd hui.'\n    };\n  }\n\n  // --- Dimanche interdit ---\n  if (dateIntervention.getDay() === 0) {\n    return {\n      valide: false,\n      erreur: 'DIMANCHE_INTERDIT',\n      message: 'Les interventions ne sont pas possibles le dimanche.'\n    };\n  }\n\n  // --- Validation heure debut (8h-18h) ---\n  var heureDebut = parseInt(body.heure_debut.split(':')[0], 10);\n  var minuteDebut = parseInt(body.heure_debut.split(':')[1] || '0', 10);\n  if (isNaN(heureDebut) || heureDebut < 8 || heureDebut >= 18) {\n    return {\n      valide: false,\n      erreur: 'HEURE_HORS_PLAGE',\n      message: 'L heure de debut doit etre entre 08:00 et 17:59. Horaires artisan : 8h-18h.'\n    };\n  }\n\n  // --- Validation duree (1-4h) ---\n  var duree = parseFloat(body.duree_heures);\n  if (isNaN(duree) || duree < 1 || duree > 4) {\n    return {\n      valide: false,\n      erreur: 'DUREE_INVALIDE',\n      message: 'La duree doit etre comprise entre 1 et 4 heures.'\n    };\n  }\n\n  // --- Verification fin avant 18h ---\n  var heureFinDecimale = heureDebut + (minuteDebut / 60) + duree;\n  if (heureFinDecimale > 18) {\n    return {\n      valide: false,\n      erreur: 'DEBORDEMENT_HORAIRE',\n      message: 'L intervention se terminerait apres 18h. Veuillez reduire la duree ou avancer l heure de debut.'\n    };\n  }\n\n  // --- Calcul creneaux horaires ---\n  var startHour = heureDebut.toString().padStart(2, '0');\n  var startMinute = minuteDebut.toString().padStart(2, '0');\n  var calendarStart = body.date_intervention + 'T' + startHour + ':' + startMinute + ':00';\n\n  var totalMinutes = (heureDebut * 60) + minuteDebut + (duree * 60);\n  var endHour = Math.floor(totalMinutes / 60).toString().padStart(2, '0');\n  var endMinute = (totalMinutes % 60).toString().padStart(2, '0');\n  var calendarEnd = body.date_intervention + 'T' + endHour + ':' + endMinute + ':00';\n\n  // --- Fenetre de recherche Calendar (journee complete) ---\n  var timeMin = body.date_intervention + 'T06:00:00+01:00';\n  var timeMax = body.date_intervention + 'T20:00:00+01:00';\n\n  // --- RGPD: ID tracabilite ---\n  var rgpdTraceId = 'INTERV-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);\n\n  // --- Date suppression prevue (3 ans) ---\n  var dateSuppression = new Date();\n  dateSuppression.setFullYear(dateSuppression.getFullYear() + 3);\n\n  // --- Formatage date FR ---\n  var jours = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];\n  var mois = ['janvier', 'fevrier', 'mars', 'avril', 'mai', 'juin', 'juillet', 'aout', 'septembre', 'octobre', 'novembre', 'decembre'];\n  var dateFr = jours[dateIntervention.getDay()] + ' ' + dateIntervention.getDate() + ' ' + mois[dateIntervention.getMonth()] + ' ' + dateIntervention.getFullYear();\n\n  return {\n    valide: true,\n    nom: body.nom.trim(),\n    prenom: body.prenom.trim(),\n    email: body.email.trim().toLowerCase(),\n    telephone: telNormalise,\n    date_intervention: body.date_intervention,\n    date_intervention_fr: dateFr,\n    heure_debut: startHour + ':' + startMinute,\n    duree_heures: duree,\n    heure_fin: endHour + ':' + endMinute,\n    adresse_chantier: body.adresse_chantier.trim(),\n    type_travaux: body.type_travaux.trim(),\n    notes: body.notes ? body.notes.trim() : '',\n    calendar_start: calendarStart,\n    calendar_end: calendarEnd,\n    time_min: timeMin,\n    time_max: timeMax,\n    rgpd_trace_id: rgpdTraceId,\n    rgpd_date_suppression: dateSuppression.toISOString(),\n    rgpd_consentement_timestamp: new Date().toISOString(),\n    rgpd_finalite: 'Planification intervention artisan',\n    timestamp: new Date().toISOString()\n  };\n}"
-              },
-              "label": "Valider la demande d'intervention",
-              "description": "Validation RGPD, champs obligatoires, format email, telephone FR, date (pas dimanche, max 90j), horaires artisan 8h-18h, duree 1-4h"
-            },
-            {
-              "name": "conditionValidation",
-              "type": "flow-control/v1/condition",
-              "parameters": {
-                "conditions": [
-                  {
-                    "field": "${validationDemande.valide}",
-                    "operator": "EQUALS",
-                    "value": true
+  "label": "artisan-planning-intervention-v1.0",
+  "description": "Planification intervention artisan avec verification disponibilite, creation evenement Google Calendar, enregistrement Notion et confirmation email. Conformite RGPD : consentement obligatoire, tracabilite, conservation 3 ans, minimisation des donnees.",
+  "inputs": [],
+  "triggers": [
+    {
+      "label": "Webhook - Demande de planification intervention",
+      "name": "webhookTrigger",
+      "type": "webhook/v1/autoRespondWithHTTP200",
+      "description": "Recoit les demandes POST de planification d'intervention artisan. Body attendu: nom, prenom, email, telephone, date_intervention (YYYY-MM-DD), heure_debut (HH:MM), duree_heures (1-4), adresse_chantier, type_travaux, consentement_rgpd (boolean), notes (optionnel)",
+      "parameters": {
+        "path": "/artisan/planifier-intervention",
+        "method": "POST",
+        "contentType": "application/json"
+      }
+    }
+  ],
+  "tasks": [
+    {
+      "label": "Gestion erreurs globale",
+      "name": "tryCatchGlobal",
+      "type": "on-error/v1",
+      "parameters": {
+        "main-branch": [
+          {
+            "label": "Valider la demande d'intervention",
+            "name": "validationDemande",
+            "type": "script/v1/javascript",
+            "description": "Validation RGPD, champs obligatoires, format email, telephone FR, date (pas dimanche, max 90j), horaires artisan 8h-18h, duree 1-4h",
+            "parameters": {
+              "script": "function execute() {\n  var body = webhookTrigger.body;\n\n  // --- RGPD: Consentement ---\n  if (!body.consentement_rgpd || body.consentement_rgpd !== true) {\n    return {\n      valide: false,\n      erreur: 'RGPD_NO_CONSENT',\n      message: 'Le consentement RGPD est obligatoire pour traiter votre demande.'\n    };\n  }\n\n  // --- Champs obligatoires ---\n  var champsObligatoires = ['nom', 'prenom', 'email', 'telephone', 'date_intervention', 'heure_debut', 'duree_heures', 'adresse_chantier', 'type_travaux'];\n  var champsManquants = [];\n  for (var i = 0; i < champsObligatoires.length; i++) {\n    var champ = champsObligatoires[i];\n    if (!body[champ] || (typeof body[champ] === 'string' && body[champ].trim() === '')) {\n      champsManquants.push(champ);\n    }\n  }\n  if (champsManquants.length > 0) {\n    return {\n      valide: false,\n      erreur: 'CHAMPS_MANQUANTS',\n      message: 'Champs obligatoires manquants : ' + champsManquants.join(', ')\n    };\n  }\n\n  // --- Validation email ---\n  var emailRegex = /^[a-zA-Z0-9._%+\\-]+@[a-zA-Z0-9.\\-]+\\.[a-zA-Z]{2,}$/;\n  if (!emailRegex.test(body.email)) {\n    return {\n      valide: false,\n      erreur: 'EMAIL_INVALIDE',\n      message: 'Adresse email invalide : ' + body.email\n    };\n  }\n\n  // --- Validation telephone (format FR) ---\n  var telNormalise = body.telephone.replace(/[\\s.\\-()]/g, '');\n  var telRegex = /^(\\+33|0033|0)[1-9][0-9]{8}$/;\n  if (!telRegex.test(telNormalise)) {\n    return {\n      valide: false,\n      erreur: 'TELEPHONE_INVALIDE',\n      message: 'Numero de telephone invalide. Format attendu : 06 12 34 56 78 ou +33612345678'\n    };\n  }\n\n  // --- Validation date intervention ---\n  var dateIntervention = new Date(body.date_intervention + 'T00:00:00');\n  if (isNaN(dateIntervention.getTime())) {\n    return {\n      valide: false,\n      erreur: 'DATE_INVALIDE',\n      message: 'Format de date invalide. Utilisez YYYY-MM-DD.'\n    };\n  }\n\n  var aujourdhui = new Date();\n  aujourdhui.setHours(0, 0, 0, 0);\n  if (dateIntervention < aujourdhui) {\n    return {\n      valide: false,\n      erreur: 'DATE_PASSEE',\n      message: 'La date d intervention ne peut pas etre dans le passe.'\n    };\n  }\n\n  var maxDate = new Date(aujourdhui);\n  maxDate.setDate(maxDate.getDate() + 90);\n  if (dateIntervention > maxDate) {\n    return {\n      valide: false,\n      erreur: 'DATE_TROP_LOINTAINE',\n      message: 'La date d intervention ne peut pas depasser 90 jours a compter d aujourd hui.'\n    };\n  }\n\n  // --- Dimanche interdit ---\n  if (dateIntervention.getDay() === 0) {\n    return {\n      valide: false,\n      erreur: 'DIMANCHE_INTERDIT',\n      message: 'Les interventions ne sont pas possibles le dimanche.'\n    };\n  }\n\n  // --- Validation heure debut (8h-18h) ---\n  var heureDebut = parseInt(body.heure_debut.split(':')[0], 10);\n  var minuteDebut = parseInt(body.heure_debut.split(':')[1] || '0', 10);\n  if (isNaN(heureDebut) || heureDebut < 8 || heureDebut >= 18) {\n    return {\n      valide: false,\n      erreur: 'HEURE_HORS_PLAGE',\n      message: 'L heure de debut doit etre entre 08:00 et 17:59. Horaires artisan : 8h-18h.'\n    };\n  }\n\n  // --- Validation duree (1-4h) ---\n  var duree = parseFloat(body.duree_heures);\n  if (isNaN(duree) || duree < 1 || duree > 4) {\n    return {\n      valide: false,\n      erreur: 'DUREE_INVALIDE',\n      message: 'La duree doit etre comprise entre 1 et 4 heures.'\n    };\n  }\n\n  // --- Verification fin avant 18h ---\n  var heureFinDecimale = heureDebut + (minuteDebut / 60) + duree;\n  if (heureFinDecimale > 18) {\n    return {\n      valide: false,\n      erreur: 'DEBORDEMENT_HORAIRE',\n      message: 'L intervention se terminerait apres 18h. Veuillez reduire la duree ou avancer l heure de debut.'\n    };\n  }\n\n  // --- Calcul creneaux horaires ---\n  var startHour = heureDebut.toString().padStart(2, '0');\n  var startMinute = minuteDebut.toString().padStart(2, '0');\n  var calendarStart = body.date_intervention + 'T' + startHour + ':' + startMinute + ':00';\n\n  var totalMinutes = (heureDebut * 60) + minuteDebut + (duree * 60);\n  var endHour = Math.floor(totalMinutes / 60).toString().padStart(2, '0');\n  var endMinute = (totalMinutes % 60).toString().padStart(2, '0');\n  var calendarEnd = body.date_intervention + 'T' + endHour + ':' + endMinute + ':00';\n\n  // --- Fenetre de recherche Calendar (journee complete) ---\n  var timeMin = body.date_intervention + 'T06:00:00+01:00';\n  var timeMax = body.date_intervention + 'T20:00:00+01:00';\n\n  // --- RGPD: ID tracabilite ---\n  var rgpdTraceId = 'INTERV-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);\n\n  // --- Date suppression prevue (3 ans) ---\n  var dateSuppression = new Date();\n  dateSuppression.setFullYear(dateSuppression.getFullYear() + 3);\n\n  // --- Formatage date FR ---\n  var jours = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];\n  var mois = ['janvier', 'fevrier', 'mars', 'avril', 'mai', 'juin', 'juillet', 'aout', 'septembre', 'octobre', 'novembre', 'decembre'];\n  var dateFr = jours[dateIntervention.getDay()] + ' ' + dateIntervention.getDate() + ' ' + mois[dateIntervention.getMonth()] + ' ' + dateIntervention.getFullYear();\n\n  return {\n    valide: true,\n    nom: body.nom.trim(),\n    prenom: body.prenom.trim(),\n    email: body.email.trim().toLowerCase(),\n    telephone: telNormalise,\n    date_intervention: body.date_intervention,\n    date_intervention_fr: dateFr,\n    heure_debut: startHour + ':' + startMinute,\n    duree_heures: duree,\n    heure_fin: endHour + ':' + endMinute,\n    adresse_chantier: body.adresse_chantier.trim(),\n    type_travaux: body.type_travaux.trim(),\n    notes: body.notes ? body.notes.trim() : '',\n    calendar_start: calendarStart,\n    calendar_end: calendarEnd,\n    time_min: timeMin,\n    time_max: timeMax,\n    rgpd_trace_id: rgpdTraceId,\n    rgpd_date_suppression: dateSuppression.toISOString(),\n    rgpd_consentement_timestamp: new Date().toISOString(),\n    rgpd_finalite: 'Planification intervention artisan',\n    timestamp: new Date().toISOString()\n  };\n}"
+            }
+          },
+          {
+            "label": "Demande valide ?",
+            "name": "conditionValidation",
+            "type": "condition/v1",
+            "description": "Oriente vers la verification de disponibilite ou le rejet avec message d'erreur",
+            "parameters": {
+              "rawExpression": true,
+              "expression": "=${validationDemande.valide} == true",
+              "caseTrue": [
+                {
+                  "label": "Verifier disponibilite Google Calendar",
+                  "name": "verifierDisponibilite",
+                  "type": "googleCalendar/v1/getEvents",
+                  "description": "Recupere tous les evenements du jour d'intervention pour verifier les conflits",
+                  "parameters": {
+                    "calendarId": "primary",
+                    "timeMin": "${validationDemande.time_min}",
+                    "timeMax": "${validationDemande.time_max}",
+                    "singleEvents": true,
+                    "orderBy": "startTime",
+                    "maxResults": 50
                   }
-                ],
-                "trueTasks": [
-                  {
-                    "name": "verifierDisponibilite",
-                    "type": "google-calendar/v1/listEvents",
-                    "parameters": {
-                      "calendarId": "primary",
-                      "timeMin": "${validationDemande.time_min}",
-                      "timeMax": "${validationDemande.time_max}",
-                      "singleEvents": true,
-                      "orderBy": "startTime",
-                      "maxResults": 50
-                    },
-                    "label": "Verifier disponibilite Google Calendar",
-                    "description": "Recupere tous les evenements du jour d'intervention pour verifier les conflits"
-                  },
-                  {
-                    "name": "analyserDisponibilite",
-                    "type": "script/v1/javascript",
-                    "parameters": {
-                      "script": "function execute() {\n  var events = verifierDisponibilite.items || [];\n  var debutDemande = new Date(validationDemande.calendar_start).getTime();\n  var finDemande = new Date(validationDemande.calendar_end).getTime();\n  var conflits = [];\n\n  for (var i = 0; i < events.length; i++) {\n    var event = events[i];\n    if (event.status === 'cancelled') continue;\n\n    var eventStart = new Date(event.start.dateTime || event.start.date).getTime();\n    var eventEnd = new Date(event.end.dateTime || event.end.date).getTime();\n\n    // Chevauchement si debut < fin existant ET fin > debut existant\n    if (debutDemande < eventEnd && finDemande > eventStart) {\n      conflits.push({\n        titre: event.summary || 'Sans titre',\n        debut: event.start.dateTime || event.start.date,\n        fin: event.end.dateTime || event.end.date\n      });\n    }\n  }\n\n  var disponible = conflits.length === 0;\n\n  // Generer un ID unique pour l'intervention\n  var interventionId = 'INT-' + validationDemande.date_intervention.replace(/-/g, '') + '-' + Date.now().toString(36).toUpperCase();\n\n  // Calcul creneaux alternatifs si indisponible\n  var creneauxAlternatifs = [];\n  if (!disponible) {\n    var dureeMs = validationDemande.duree_heures * 60 * 60 * 1000;\n    for (var h = 8; h <= 17; h++) {\n      var slotStart = new Date(validationDemande.date_intervention + 'T' + h.toString().padStart(2, '0') + ':00:00').getTime();\n      var slotEnd = slotStart + dureeMs;\n\n      if (slotEnd > new Date(validationDemande.date_intervention + 'T18:00:00').getTime()) continue;\n\n      var slotLibre = true;\n      for (var j = 0; j < events.length; j++) {\n        var ev = events[j];\n        if (ev.status === 'cancelled') continue;\n        var evStart = new Date(ev.start.dateTime || ev.start.date).getTime();\n        var evEnd = new Date(ev.end.dateTime || ev.end.date).getTime();\n        if (slotStart < evEnd && slotEnd > evStart) {\n          slotLibre = false;\n          break;\n        }\n      }\n      if (slotLibre) {\n        creneauxAlternatifs.push(h.toString().padStart(2, '0') + ':00 - ' + Math.floor(slotEnd / 3600000 % 24).toString().padStart(2, '0') + ':00');\n      }\n    }\n  }\n\n  // Log RGPD-compliant (email masque)\n  var maskedEmail = validationDemande.email.replace(/(.{2}).*(@.*)/, '$1***$2');\n  var log = {\n    step: 'analyser_disponibilite',\n    status: disponible ? 'creneau_libre' : 'conflit_detecte',\n    intervention_id: interventionId,\n    client_email_masked: maskedEmail,\n    date: validationDemande.date_intervention,\n    creneau: validationDemande.heure_debut + ' - ' + validationDemande.heure_fin,\n    conflits_count: conflits.length,\n    rgpd_trace_id: validationDemande.rgpd_trace_id,\n    timestamp: new Date().toISOString()\n  };\n\n  return {\n    disponible: disponible,\n    intervention_id: interventionId,\n    conflits: conflits,\n    creneaux_alternatifs: creneauxAlternatifs,\n    log: log\n  };\n}"
-                    },
-                    "label": "Analyser la disponibilite du creneau",
-                    "description": "Detecte les chevauchements horaires et propose des creneaux alternatifs si conflit"
-                  },
-                  {
-                    "name": "conditionDisponibilite",
-                    "type": "flow-control/v1/condition",
-                    "parameters": {
-                      "conditions": [
-                        {
-                          "field": "${analyserDisponibilite.disponible}",
-                          "operator": "EQUALS",
-                          "value": true
+                },
+                {
+                  "label": "Analyser la disponibilite du creneau",
+                  "name": "analyserDisponibilite",
+                  "type": "script/v1/javascript",
+                  "description": "Detecte les chevauchements horaires et propose des creneaux alternatifs si conflit",
+                  "parameters": {
+                    "script": "function execute() {\n  var events = verifierDisponibilite.items || [];\n  var debutDemande = new Date(validationDemande.calendar_start).getTime();\n  var finDemande = new Date(validationDemande.calendar_end).getTime();\n  var conflits = [];\n\n  for (var i = 0; i < events.length; i++) {\n    var event = events[i];\n    if (event.status === 'cancelled') continue;\n\n    var eventStart = new Date(event.start.dateTime || event.start.date).getTime();\n    var eventEnd = new Date(event.end.dateTime || event.end.date).getTime();\n\n    // Chevauchement si debut < fin existant ET fin > debut existant\n    if (debutDemande < eventEnd && finDemande > eventStart) {\n      conflits.push({\n        titre: event.summary || 'Sans titre',\n        debut: event.start.dateTime || event.start.date,\n        fin: event.end.dateTime || event.end.date\n      });\n    }\n  }\n\n  var disponible = conflits.length === 0;\n\n  // Generer un ID unique pour l'intervention\n  var interventionId = 'INT-' + validationDemande.date_intervention.replace(/-/g, '') + '-' + Date.now().toString(36).toUpperCase();\n\n  // Calcul creneaux alternatifs si indisponible\n  var creneauxAlternatifs = [];\n  if (!disponible) {\n    var dureeMs = validationDemande.duree_heures * 60 * 60 * 1000;\n    for (var h = 8; h <= 17; h++) {\n      var slotStart = new Date(validationDemande.date_intervention + 'T' + h.toString().padStart(2, '0') + ':00:00').getTime();\n      var slotEnd = slotStart + dureeMs;\n\n      if (slotEnd > new Date(validationDemande.date_intervention + 'T18:00:00').getTime()) continue;\n\n      var slotLibre = true;\n      for (var j = 0; j < events.length; j++) {\n        var ev = events[j];\n        if (ev.status === 'cancelled') continue;\n        var evStart = new Date(ev.start.dateTime || ev.start.date).getTime();\n        var evEnd = new Date(ev.end.dateTime || ev.end.date).getTime();\n        if (slotStart < evEnd && slotEnd > evStart) {\n          slotLibre = false;\n          break;\n        }\n      }\n      if (slotLibre) {\n        creneauxAlternatifs.push(h.toString().padStart(2, '0') + ':00 - ' + Math.floor(slotEnd / 3600000 % 24).toString().padStart(2, '0') + ':00');\n      }\n    }\n  }\n\n  // Log RGPD-compliant (email masque)\n  var maskedEmail = validationDemande.email.replace(/(.{2}).*(@.*)/, '$1***$2');\n  var log = {\n    step: 'analyser_disponibilite',\n    status: disponible ? 'creneau_libre' : 'conflit_detecte',\n    intervention_id: interventionId,\n    client_email_masked: maskedEmail,\n    date: validationDemande.date_intervention,\n    creneau: validationDemande.heure_debut + ' - ' + validationDemande.heure_fin,\n    conflits_count: conflits.length,\n    rgpd_trace_id: validationDemande.rgpd_trace_id,\n    timestamp: new Date().toISOString()\n  };\n\n  return {\n    disponible: disponible,\n    intervention_id: interventionId,\n    conflits: conflits,\n    creneaux_alternatifs: creneauxAlternatifs,\n    log: log\n  };\n}"
+                  }
+                },
+                {
+                  "label": "Creneau disponible ?",
+                  "name": "conditionDisponibilite",
+                  "type": "condition/v1",
+                  "description": "Oriente vers la creation d'evenement ou la proposition d'alternatives",
+                  "parameters": {
+                    "rawExpression": true,
+                    "expression": "=${analyserDisponibilite.disponible} == true",
+                    "caseTrue": [
+                      {
+                        "label": "Creer evenement Google Calendar",
+                        "name": "creerEvenementCalendar",
+                        "type": "googleCalendar/v1/createEvent",
+                        "description": "Cree l'evenement d'intervention avec localisation, rappels 1h et 24h avant",
+                        "parameters": {
+                          "calendarId": "primary",
+                          "summary": "[INTERVENTION] ${validationDemande.type_travaux} - ${validationDemande.prenom} ${validationDemande.nom}",
+                          "description": "Intervention artisan\n\nID: ${analyserDisponibilite.intervention_id}\nClient: ${validationDemande.prenom} ${validationDemande.nom}\nTelephone: ${validationDemande.telephone}\nEmail: ${validationDemande.email}\nType: ${validationDemande.type_travaux}\nDuree: ${validationDemande.duree_heures}h\nAdresse: ${validationDemande.adresse_chantier}\n\nNotes: ${validationDemande.notes}\n\nRGPD Trace: ${validationDemande.rgpd_trace_id}",
+                          "location": "${validationDemande.adresse_chantier}",
+                          "start": {
+                            "dateTime": "${validationDemande.calendar_start}",
+                            "timeZone": "Europe/Paris"
+                          },
+                          "end": {
+                            "dateTime": "${validationDemande.calendar_end}",
+                            "timeZone": "Europe/Paris"
+                          },
+                          "reminders": {
+                            "useDefault": false,
+                            "overrides": [
+                              {
+                                "method": "popup",
+                                "minutes": 60
+                              },
+                              {
+                                "method": "popup",
+                                "minutes": 1440
+                              }
+                            ]
+                          },
+                          "colorId": "10"
                         }
-                      ],
-                      "trueTasks": [
-                        {
-                          "name": "creerEvenementCalendar",
-                          "type": "google-calendar/v1/createEvent",
-                          "parameters": {
-                            "calendarId": "primary",
-                            "summary": "[INTERVENTION] ${validationDemande.type_travaux} - ${validationDemande.prenom} ${validationDemande.nom}",
-                            "description": "Intervention artisan\n\nID: ${analyserDisponibilite.intervention_id}\nClient: ${validationDemande.prenom} ${validationDemande.nom}\nTelephone: ${validationDemande.telephone}\nEmail: ${validationDemande.email}\nType: ${validationDemande.type_travaux}\nDuree: ${validationDemande.duree_heures}h\nAdresse: ${validationDemande.adresse_chantier}\n\nNotes: ${validationDemande.notes}\n\nRGPD Trace: ${validationDemande.rgpd_trace_id}",
-                            "location": "${validationDemande.adresse_chantier}",
-                            "start": {
-                              "dateTime": "${validationDemande.calendar_start}",
-                              "timeZone": "Europe/Paris"
-                            },
-                            "end": {
-                              "dateTime": "${validationDemande.calendar_end}",
-                              "timeZone": "Europe/Paris"
-                            },
-                            "reminders": {
-                              "useDefault": false,
-                              "overrides": [
+                      },
+                      {
+                        "label": "Enregistrer dans Notion Interventions",
+                        "name": "enregistrerNotion",
+                        "type": "notion/v1/createDatabaseItem",
+                        "description": "Cree une entree dans la base Notion Interventions avec toutes les informations et tracabilite RGPD",
+                        "parameters": {
+                          "databaseId": "${env.NOTION_DB_INTERVENTIONS_ARTISAN}",
+                          "properties": {
+                            "Intervention ID": {
+                              "title": [
                                 {
-                                  "method": "popup",
-                                  "minutes": 60
-                                },
-                                {
-                                  "method": "popup",
-                                  "minutes": 1440
+                                  "text": {
+                                    "content": "${analyserDisponibilite.intervention_id}"
+                                  }
                                 }
                               ]
                             },
-                            "colorId": "10"
-                          },
-                          "label": "Creer evenement Google Calendar",
-                          "description": "Cree l'evenement d'intervention avec localisation, rappels 1h et 24h avant"
-                        },
-                        {
-                          "name": "enregistrerNotion",
-                          "type": "notion/v1/createDatabaseItem",
-                          "parameters": {
-                            "databaseId": "${env.NOTION_DB_INTERVENTIONS_ARTISAN}",
-                            "properties": {
-                              "Intervention ID": {
-                                "title": [
-                                  {
-                                    "text": {
-                                      "content": "${analyserDisponibilite.intervention_id}"
-                                    }
+                            "Client": {
+                              "rich_text": [
+                                {
+                                  "text": {
+                                    "content": "${validationDemande.prenom} ${validationDemande.nom}"
                                   }
-                                ]
-                              },
-                              "Client": {
-                                "rich_text": [
-                                  {
-                                    "text": {
-                                      "content": "${validationDemande.prenom} ${validationDemande.nom}"
-                                    }
-                                  }
-                                ]
-                              },
-                              "Email": {
-                                "email": "${validationDemande.email}"
-                              },
-                              "Telephone": {
-                                "phone_number": "${validationDemande.telephone}"
-                              },
-                              "Date Intervention": {
-                                "date": {
-                                  "start": "${validationDemande.calendar_start}",
-                                  "end": "${validationDemande.calendar_end}",
-                                  "time_zone": "Europe/Paris"
                                 }
-                              },
-                              "Adresse Chantier": {
-                                "rich_text": [
-                                  {
-                                    "text": {
-                                      "content": "${validationDemande.adresse_chantier}"
-                                    }
+                              ]
+                            },
+                            "Email": {
+                              "email": "${validationDemande.email}"
+                            },
+                            "Telephone": {
+                              "phone_number": "${validationDemande.telephone}"
+                            },
+                            "Date Intervention": {
+                              "date": {
+                                "start": "${validationDemande.calendar_start}",
+                                "end": "${validationDemande.calendar_end}",
+                                "time_zone": "Europe/Paris"
+                              }
+                            },
+                            "Adresse Chantier": {
+                              "rich_text": [
+                                {
+                                  "text": {
+                                    "content": "${validationDemande.adresse_chantier}"
                                   }
-                                ]
-                              },
-                              "Type Travaux": {
-                                "select": {
-                                  "name": "${validationDemande.type_travaux}"
                                 }
-                              },
-                              "Duree (h)": {
-                                "number": "${validationDemande.duree_heures}"
-                              },
-                              "Statut": {
-                                "select": {
-                                  "name": "Planifiee"
-                                }
-                              },
-                              "Notes": {
-                                "rich_text": [
-                                  {
-                                    "text": {
-                                      "content": "${validationDemande.notes}"
-                                    }
+                              ]
+                            },
+                            "Type Travaux": {
+                              "select": {
+                                "name": "${validationDemande.type_travaux}"
+                              }
+                            },
+                            "Duree (h)": {
+                              "number": "${validationDemande.duree_heures}"
+                            },
+                            "Statut": {
+                              "select": {
+                                "name": "Planifiee"
+                              }
+                            },
+                            "Notes": {
+                              "rich_text": [
+                                {
+                                  "text": {
+                                    "content": "${validationDemande.notes}"
                                   }
-                                ]
-                              },
-                              "Google Calendar Event ID": {
-                                "rich_text": [
-                                  {
-                                    "text": {
-                                      "content": "${creerEvenementCalendar.id}"
-                                    }
-                                  }
-                                ]
-                              },
-                              "RGPD Trace ID": {
-                                "rich_text": [
-                                  {
-                                    "text": {
-                                      "content": "${validationDemande.rgpd_trace_id}"
-                                    }
-                                  }
-                                ]
-                              },
-                              "RGPD Consentement": {
-                                "date": {
-                                  "start": "${validationDemande.rgpd_consentement_timestamp}"
                                 }
-                              },
-                              "RGPD Date Suppression": {
-                                "date": {
-                                  "start": "${validationDemande.rgpd_date_suppression}"
+                              ]
+                            },
+                            "Google Calendar Event ID": {
+                              "rich_text": [
+                                {
+                                  "text": {
+                                    "content": "${creerEvenementCalendar.id}"
+                                  }
                                 }
+                              ]
+                            },
+                            "RGPD Trace ID": {
+                              "rich_text": [
+                                {
+                                  "text": {
+                                    "content": "${validationDemande.rgpd_trace_id}"
+                                  }
+                                }
+                              ]
+                            },
+                            "RGPD Consentement": {
+                              "date": {
+                                "start": "${validationDemande.rgpd_consentement_timestamp}"
+                              }
+                            },
+                            "RGPD Date Suppression": {
+                              "date": {
+                                "start": "${validationDemande.rgpd_date_suppression}"
                               }
                             }
-                          },
-                          "label": "Enregistrer dans Notion Interventions",
-                          "description": "Cree une entree dans la base Notion Interventions avec toutes les informations et tracabilite RGPD"
-                        },
-                        {
-                          "name": "envoyerConfirmation",
-                          "type": "gmail/v1/sendEmail",
-                          "parameters": {
-                            "to": "${validationDemande.email}",
-                            "subject": "Confirmation intervention ${validationDemande.type_travaux} - ${validationDemande.date_intervention_fr}",
-                            "bodyType": "HTML",
-                            "body": "<!DOCTYPE html><html lang=\"fr\"><head><meta charset=\"UTF-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\"><title>Confirmation d'intervention</title></head><body style=\"margin:0;padding:0;font-family:Georgia,serif;color:#333;line-height:1.6;background-color:#f4f4f4;\"><table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"max-width:600px;margin:0 auto;background:#ffffff;\"><tr><td style=\"background-color:#16a34a;color:#ffffff;padding:30px 40px;text-align:center;\"><h1 style=\"margin:0;font-size:24px;font-weight:bold;\">Intervention Confirmee</h1><p style=\"margin:8px 0 0;font-size:14px;opacity:0.9;\">Votre demande a ete validee avec succes</p></td></tr><tr><td style=\"padding:30px 40px;\"><p style=\"margin:0 0 20px;\">Bonjour <strong>${validationDemande.prenom} ${validationDemande.nom}</strong>,</p><p style=\"margin:0 0 20px;\">Nous vous confirmons la planification de votre intervention. Voici le recapitulatif :</p><table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"background:#f8faf8;border-left:4px solid #16a34a;padding:0;margin:0 0 25px;\"><tr><td style=\"padding:20px 25px;\"><table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\"><tr><td style=\"padding:6px 0;color:#666;width:160px;\">Reference :</td><td style=\"padding:6px 0;font-weight:bold;\">${analyserDisponibilite.intervention_id}</td></tr><tr><td style=\"padding:6px 0;color:#666;\">Type de travaux :</td><td style=\"padding:6px 0;font-weight:bold;\">${validationDemande.type_travaux}</td></tr><tr><td style=\"padding:6px 0;color:#666;\">Date :</td><td style=\"padding:6px 0;font-weight:bold;\">${validationDemande.date_intervention_fr}</td></tr><tr><td style=\"padding:6px 0;color:#666;\">Horaire :</td><td style=\"padding:6px 0;font-weight:bold;\">${validationDemande.heure_debut} - ${validationDemande.heure_fin} (${validationDemande.duree_heures}h)</td></tr><tr><td style=\"padding:6px 0;color:#666;\">Adresse chantier :</td><td style=\"padding:6px 0;font-weight:bold;\">${validationDemande.adresse_chantier}</td></tr></table></td></tr></table><h2 style=\"margin:25px 0 15px;font-size:18px;color:#16a34a;\">Checklist de preparation</h2><table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"background:#fffbeb;border:1px solid #fbbf24;border-radius:4px;margin:0 0 25px;\"><tr><td style=\"padding:20px 25px;\"><p style=\"margin:0 0 10px;font-weight:bold;color:#92400e;\">Avant l'intervention, veuillez vous assurer que :</p><ul style=\"margin:0;padding:0 0 0 20px;color:#78350f;\"><li style=\"padding:4px 0;\">L'acces au chantier est libre et degage</li><li style=\"padding:4px 0;\">Les cles ou codes d'acces sont disponibles</li><li style=\"padding:4px 0;\">L'eau et l'electricite sont accessibles sur le chantier</li><li style=\"padding:4px 0;\">La zone de travail est degagee et securisee</li><li style=\"padding:4px 0;\">Un emplacement de stationnement est prevu a proximite</li><li style=\"padding:4px 0;\">Les animaux domestiques sont eloignes de la zone</li></ul></td></tr></table><p style=\"margin:0 0 15px;\">En cas d'empechement ou pour toute modification, veuillez nous contacter au plus vite.</p><p style=\"margin:0;\">Cordialement,<br><strong>L'equipe artisan</strong></p></td></tr><tr><td style=\"padding:25px 40px;background:#f9fafb;border-top:1px solid #e5e7eb;\"><p style=\"margin:0 0 10px;font-size:12px;color:#6b7280;\"><strong>Informations pratiques</strong></p><p style=\"margin:0;font-size:12px;color:#6b7280;\">Contact : ${validationDemande.telephone}<br>Reference intervention : ${analyserDisponibilite.intervention_id}</p></td></tr><tr><td style=\"padding:20px 40px;background:#f3f4f6;border-top:1px solid #e5e7eb;\"><p style=\"margin:0 0 8px;font-size:10px;color:#9ca3af;\"><strong>Protection des donnees (RGPD)</strong></p><p style=\"margin:0;font-size:10px;color:#9ca3af;\">Vos donnees personnelles sont traitees dans le cadre de la planification de votre intervention (base legale : consentement). Elles seront conservees 3 ans apres la derniere intervention. Vous disposez d'un droit d'acces, de rectification, de suppression et de portabilite de vos donnees. Pour exercer vos droits, contactez-nous par email. Responsable de traitement : [Nom entreprise artisan].</p><p style=\"margin:8px 0 0;font-size:10px;color:#9ca3af;\">ID de tracabilite : ${validationDemande.rgpd_trace_id} | Consentement enregistre le ${validationDemande.rgpd_consentement_timestamp}</p></td></tr></table></body></html>"
-                          },
-                          "label": "Envoyer email de confirmation",
-                          "description": "Email HTML professionnel avec recapitulatif intervention, checklist preparation et mentions RGPD"
-                        },
-                        {
-                          "name": "reponseSucces",
-                          "type": "script/v1/javascript",
-                          "parameters": {
-                            "script": "function execute() {\n  var maskedEmail = validationDemande.email.replace(/(.{2}).*(@.*)/, '$1***$2');\n\n  return {\n    success: true,\n    status: 'PLANIFIEE',\n    intervention_id: analyserDisponibilite.intervention_id,\n    date: validationDemande.date_intervention_fr,\n    creneau: validationDemande.heure_debut + ' - ' + validationDemande.heure_fin,\n    adresse: validationDemande.adresse_chantier,\n    type_travaux: validationDemande.type_travaux,\n    calendar_event_id: creerEvenementCalendar.id,\n    notion_page_id: enregistrerNotion.id,\n    confirmation_envoyee: true,\n    message: 'Intervention planifiee avec succes. Un email de confirmation a ete envoye.',\n    log: {\n      step: 'workflow_completed',\n      status: 'success',\n      intervention_id: analyserDisponibilite.intervention_id,\n      client_email_masked: maskedEmail,\n      rgpd_trace_id: validationDemande.rgpd_trace_id,\n      timestamp: new Date().toISOString()\n    }\n  };\n}"
-                          },
-                          "label": "Formater la reponse de succes",
-                          "description": "Reponse finale avec ID intervention, confirmations et log RGPD-compliant"
+                          }
                         }
-                      ],
-                      "falseTasks": [
-                        {
-                          "name": "reponseIndisponible",
-                          "type": "script/v1/javascript",
-                          "parameters": {
-                            "script": "function execute() {\n  var maskedEmail = validationDemande.email.replace(/(.{2}).*(@.*)/, '$1***$2');\n\n  return {\n    success: false,\n    status: 'CRENEAU_INDISPONIBLE',\n    intervention_id: analyserDisponibilite.intervention_id,\n    date: validationDemande.date_intervention_fr,\n    creneau_demande: validationDemande.heure_debut + ' - ' + validationDemande.heure_fin,\n    conflits: analyserDisponibilite.conflits,\n    creneaux_alternatifs: analyserDisponibilite.creneaux_alternatifs,\n    message: 'Le creneau demande n est pas disponible. ' + (analyserDisponibilite.creneaux_alternatifs.length > 0 ? 'Creneaux alternatifs proposes : ' + analyserDisponibilite.creneaux_alternatifs.join(', ') : 'Aucun creneau disponible ce jour pour cette duree.'),\n    log: {\n      step: 'creneau_indisponible',\n      status: 'conflict',\n      intervention_id: analyserDisponibilite.intervention_id,\n      client_email_masked: maskedEmail,\n      conflits_count: analyserDisponibilite.conflits.length,\n      alternatives_count: analyserDisponibilite.creneaux_alternatifs.length,\n      rgpd_trace_id: validationDemande.rgpd_trace_id,\n      timestamp: new Date().toISOString()\n    }\n  };\n}"
-                          },
-                          "label": "Reponse creneau indisponible avec alternatives",
-                          "description": "Retourne les conflits detectes et les creneaux alternatifs disponibles"
+                      },
+                      {
+                        "label": "Envoyer email de confirmation",
+                        "name": "envoyerConfirmation",
+                        "type": "googleMail/v1/sendEmail",
+                        "description": "Email HTML professionnel avec recapitulatif intervention, checklist preparation et mentions RGPD",
+                        "parameters": {
+                          "to": "${validationDemande.email}",
+                          "subject": "Confirmation intervention ${validationDemande.type_travaux} - ${validationDemande.date_intervention_fr}",
+                          "bodyType": "HTML",
+                          "body": "<!DOCTYPE html><html lang=\"fr\"><head><meta charset=\"UTF-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\"><title>Confirmation d'intervention</title></head><body style=\"margin:0;padding:0;font-family:Georgia,serif;color:#333;line-height:1.6;background-color:#f4f4f4;\"><table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"max-width:600px;margin:0 auto;background:#ffffff;\"><tr><td style=\"background-color:#16a34a;color:#ffffff;padding:30px 40px;text-align:center;\"><h1 style=\"margin:0;font-size:24px;font-weight:bold;\">Intervention Confirmee</h1><p style=\"margin:8px 0 0;font-size:14px;opacity:0.9;\">Votre demande a ete validee avec succes</p></td></tr><tr><td style=\"padding:30px 40px;\"><p style=\"margin:0 0 20px;\">Bonjour <strong>${validationDemande.prenom} ${validationDemande.nom}</strong>,</p><p style=\"margin:0 0 20px;\">Nous vous confirmons la planification de votre intervention. Voici le recapitulatif :</p><table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"background:#f8faf8;border-left:4px solid #16a34a;padding:0;margin:0 0 25px;\"><tr><td style=\"padding:20px 25px;\"><table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\"><tr><td style=\"padding:6px 0;color:#666;width:160px;\">Reference :</td><td style=\"padding:6px 0;font-weight:bold;\">${analyserDisponibilite.intervention_id}</td></tr><tr><td style=\"padding:6px 0;color:#666;\">Type de travaux :</td><td style=\"padding:6px 0;font-weight:bold;\">${validationDemande.type_travaux}</td></tr><tr><td style=\"padding:6px 0;color:#666;\">Date :</td><td style=\"padding:6px 0;font-weight:bold;\">${validationDemande.date_intervention_fr}</td></tr><tr><td style=\"padding:6px 0;color:#666;\">Horaire :</td><td style=\"padding:6px 0;font-weight:bold;\">${validationDemande.heure_debut} - ${validationDemande.heure_fin} (${validationDemande.duree_heures}h)</td></tr><tr><td style=\"padding:6px 0;color:#666;\">Adresse chantier :</td><td style=\"padding:6px 0;font-weight:bold;\">${validationDemande.adresse_chantier}</td></tr></table></td></tr></table><h2 style=\"margin:25px 0 15px;font-size:18px;color:#16a34a;\">Checklist de preparation</h2><table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"background:#fffbeb;border:1px solid #fbbf24;border-radius:4px;margin:0 0 25px;\"><tr><td style=\"padding:20px 25px;\"><p style=\"margin:0 0 10px;font-weight:bold;color:#92400e;\">Avant l'intervention, veuillez vous assurer que :</p><ul style=\"margin:0;padding:0 0 0 20px;color:#78350f;\"><li style=\"padding:4px 0;\">L'acces au chantier est libre et degage</li><li style=\"padding:4px 0;\">Les cles ou codes d'acces sont disponibles</li><li style=\"padding:4px 0;\">L'eau et l'electricite sont accessibles sur le chantier</li><li style=\"padding:4px 0;\">La zone de travail est degagee et securisee</li><li style=\"padding:4px 0;\">Un emplacement de stationnement est prevu a proximite</li><li style=\"padding:4px 0;\">Les animaux domestiques sont eloignes de la zone</li></ul></td></tr></table><p style=\"margin:0 0 15px;\">En cas d'empechement ou pour toute modification, veuillez nous contacter au plus vite.</p><p style=\"margin:0;\">Cordialement,<br><strong>L'equipe artisan</strong></p></td></tr><tr><td style=\"padding:25px 40px;background:#f9fafb;border-top:1px solid #e5e7eb;\"><p style=\"margin:0 0 10px;font-size:12px;color:#6b7280;\"><strong>Informations pratiques</strong></p><p style=\"margin:0;font-size:12px;color:#6b7280;\">Contact : ${validationDemande.telephone}<br>Reference intervention : ${analyserDisponibilite.intervention_id}</p></td></tr><tr><td style=\"padding:20px 40px;background:#f3f4f6;border-top:1px solid #e5e7eb;\"><p style=\"margin:0 0 8px;font-size:10px;color:#9ca3af;\"><strong>Protection des donnees (RGPD)</strong></p><p style=\"margin:0;font-size:10px;color:#9ca3af;\">Vos donnees personnelles sont traitees dans le cadre de la planification de votre intervention (base legale : consentement). Elles seront conservees 3 ans apres la derniere intervention. Vous disposez d'un droit d'acces, de rectification, de suppression et de portabilite de vos donnees. Pour exercer vos droits, contactez-nous par email. Responsable de traitement : [Nom entreprise artisan].</p><p style=\"margin:8px 0 0;font-size:10px;color:#9ca3af;\">ID de tracabilite : ${validationDemande.rgpd_trace_id} | Consentement enregistre le ${validationDemande.rgpd_consentement_timestamp}</p></td></tr></table></body></html>"
                         }
-                      ]
-                    },
-                    "label": "Creneau disponible ?",
-                    "description": "Oriente vers la creation d'evenement ou la proposition d'alternatives"
+                      },
+                      {
+                        "label": "Formater la reponse de succes",
+                        "name": "reponseSucces",
+                        "type": "script/v1/javascript",
+                        "description": "Reponse finale avec ID intervention, confirmations et log RGPD-compliant",
+                        "parameters": {
+                          "script": "function execute() {\n  var maskedEmail = validationDemande.email.replace(/(.{2}).*(@.*)/, '$1***$2');\n\n  return {\n    success: true,\n    status: 'PLANIFIEE',\n    intervention_id: analyserDisponibilite.intervention_id,\n    date: validationDemande.date_intervention_fr,\n    creneau: validationDemande.heure_debut + ' - ' + validationDemande.heure_fin,\n    adresse: validationDemande.adresse_chantier,\n    type_travaux: validationDemande.type_travaux,\n    calendar_event_id: creerEvenementCalendar.id,\n    notion_page_id: enregistrerNotion.id,\n    confirmation_envoyee: true,\n    message: 'Intervention planifiee avec succes. Un email de confirmation a ete envoye.',\n    log: {\n      step: 'workflow_completed',\n      status: 'success',\n      intervention_id: analyserDisponibilite.intervention_id,\n      client_email_masked: maskedEmail,\n      rgpd_trace_id: validationDemande.rgpd_trace_id,\n      timestamp: new Date().toISOString()\n    }\n  };\n}"
+                        }
+                      }
+                    ],
+                    "caseFalse": [
+                      {
+                        "label": "Reponse creneau indisponible avec alternatives",
+                        "name": "reponseIndisponible",
+                        "type": "script/v1/javascript",
+                        "description": "Retourne les conflits detectes et les creneaux alternatifs disponibles",
+                        "parameters": {
+                          "script": "function execute() {\n  var maskedEmail = validationDemande.email.replace(/(.{2}).*(@.*)/, '$1***$2');\n\n  return {\n    success: false,\n    status: 'CRENEAU_INDISPONIBLE',\n    intervention_id: analyserDisponibilite.intervention_id,\n    date: validationDemande.date_intervention_fr,\n    creneau_demande: validationDemande.heure_debut + ' - ' + validationDemande.heure_fin,\n    conflits: analyserDisponibilite.conflits,\n    creneaux_alternatifs: analyserDisponibilite.creneaux_alternatifs,\n    message: 'Le creneau demande n est pas disponible. ' + (analyserDisponibilite.creneaux_alternatifs.length > 0 ? 'Creneaux alternatifs proposes : ' + analyserDisponibilite.creneaux_alternatifs.join(', ') : 'Aucun creneau disponible ce jour pour cette duree.'),\n    log: {\n      step: 'creneau_indisponible',\n      status: 'conflict',\n      intervention_id: analyserDisponibilite.intervention_id,\n      client_email_masked: maskedEmail,\n      conflits_count: analyserDisponibilite.conflits.length,\n      alternatives_count: analyserDisponibilite.creneaux_alternatifs.length,\n      rgpd_trace_id: validationDemande.rgpd_trace_id,\n      timestamp: new Date().toISOString()\n    }\n  };\n}"
+                        }
+                      }
+                    ]
                   }
-                ],
-                "falseTasks": [
-                  {
-                    "name": "reponseValidationEchouee",
-                    "type": "script/v1/javascript",
-                    "parameters": {
-                      "script": "function execute() {\n  return {\n    success: false,\n    status: 'VALIDATION_ECHOUEE',\n    erreur: validationDemande.erreur,\n    message: validationDemande.message,\n    log: {\n      step: 'validation_echouee',\n      status: 'error',\n      error_code: validationDemande.erreur,\n      error_message: validationDemande.message,\n      rgpd_note: 'Aucune donnee personnelle stockee (validation echouee)',\n      timestamp: new Date().toISOString()\n    }\n  };\n}"
-                    },
-                    "label": "Reponse validation echouee",
-                    "description": "Retourne le detail de l'erreur de validation sans stocker de donnees personnelles"
+                }
+              ],
+              "caseFalse": [
+                {
+                  "label": "Reponse validation echouee",
+                  "name": "reponseValidationEchouee",
+                  "type": "script/v1/javascript",
+                  "description": "Retourne le detail de l'erreur de validation sans stocker de donnees personnelles",
+                  "parameters": {
+                    "script": "function execute() {\n  return {\n    success: false,\n    status: 'VALIDATION_ECHOUEE',\n    erreur: validationDemande.erreur,\n    message: validationDemande.message,\n    log: {\n      step: 'validation_echouee',\n      status: 'error',\n      error_code: validationDemande.erreur,\n      error_message: validationDemande.message,\n      rgpd_note: 'Aucune donnee personnelle stockee (validation echouee)',\n      timestamp: new Date().toISOString()\n    }\n  };\n}"
                   }
-                ]
-              },
-              "label": "Demande valide ?",
-              "description": "Oriente vers la verification de disponibilite ou le rejet avec message d'erreur"
+                }
+              ]
             }
-          ],
-          "catchTasks": [
-            {
-              "name": "gestionErreurGlobale",
-              "type": "script/v1/javascript",
-              "parameters": {
-                "script": "function execute() {\n  var errorInfo = tryCatchGlobal.error || {};\n\n  var errorLog = {\n    step: 'error_handler_global',\n    status: 'error',\n    error_code: errorInfo.name || 'UNKNOWN_ERROR',\n    error_message: errorInfo.message || 'Une erreur inattendue est survenue',\n    error_task: errorInfo.taskName || 'unknown',\n    timestamp: new Date().toISOString(),\n    workflow: 'artisan-planning-intervention-v1.0',\n    severity: 'high'\n  };\n\n  return {\n    success: false,\n    status: 'ERREUR_SYSTEME',\n    message: 'Une erreur technique est survenue lors du traitement de votre demande. Veuillez reessayer ou nous contacter directement.',\n    error_reference: 'ERR-' + Date.now().toString(36).toUpperCase(),\n    log: errorLog\n  };\n}"
-              },
-              "label": "Gestion erreur globale",
-              "description": "Capture toute erreur non geree, genere une reference d'erreur et retourne un message utilisateur securise"
+          }
+        ],
+        "on-error-branch": [
+          {
+            "label": "Gestion erreur globale",
+            "name": "gestionErreurGlobale",
+            "type": "script/v1/javascript",
+            "description": "Capture toute erreur non geree, genere une reference d'erreur et retourne un message utilisateur securise",
+            "parameters": {
+              "script": "function execute() {\n  var errorInfo = tryCatchGlobal.error || {};\n\n  var errorLog = {\n    step: 'error_handler_global',\n    status: 'error',\n    error_code: errorInfo.name || 'UNKNOWN_ERROR',\n    error_message: errorInfo.message || 'Une erreur inattendue est survenue',\n    error_task: errorInfo.taskName || 'unknown',\n    timestamp: new Date().toISOString(),\n    workflow: 'artisan-planning-intervention-v1.0',\n    severity: 'high'\n  };\n\n  return {\n    success: false,\n    status: 'ERREUR_SYSTEME',\n    message: 'Une erreur technique est survenue lors du traitement de votre demande. Veuillez reessayer ou nous contacter directement.',\n    error_reference: 'ERR-' + Date.now().toString(36).toUpperCase(),\n    log: errorLog\n  };\n}"
             }
-          ]
-        }
+          }
+        ]
       }
-    ],
-    "triggers": [
-      {
-        "name": "webhookTrigger",
-        "type": "webhook/v1/newWebhookTrigger",
-        "parameters": {
-          "path": "/artisan/planifier-intervention",
-          "method": "POST",
-          "contentType": "application/json"
-        },
-        "label": "Webhook - Demande de planification intervention",
-        "description": "Recoit les demandes POST de planification d'intervention artisan. Body attendu: nom, prenom, email, telephone, date_intervention (YYYY-MM-DD), heure_debut (HH:MM), duree_heures (1-4), adresse_chantier, type_travaux, consentement_rgpd (boolean), notes (optionnel)"
-      }
-    ]
-  },
-  "label": "artisan-planning-intervention-v1.0",
-  "description": "Planification intervention artisan avec verification disponibilite, creation evenement Google Calendar, enregistrement Notion et confirmation email. Conformite RGPD : consentement obligatoire, tracabilite, conservation 3 ans, minimisation des donnees.",
-  "version": 1
+    }
+  ]
 }

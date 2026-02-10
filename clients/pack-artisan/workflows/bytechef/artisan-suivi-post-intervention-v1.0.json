@@ -1,180 +1,184 @@
 {
-  "definition": {
-    "tasks": [
-      {
-        "name": "tryCatchWrapper",
-        "type": "flow-control/v1/try-catch",
-        "parameters": {
-          "try": [
-            {
-              "name": "initContext",
-              "type": "script/v1/javascript",
-              "parameters": {
-                "script": "// ============================================================\n// STEP 1 - Initialisation et calcul plage J-2\n// Calcule la fenetre de dates pour les interventions terminées\n// il y a exactement 2 jours (suivi post-intervention J-2)\n// ============================================================\n\nconst now = new Date();\nconst workflow_context = {\n  workflowName: 'artisan-suivi-post-intervention-v1.0',\n  startTime: now.toISOString(),\n  trigger: 'schedule',\n  timezone: 'Europe/Paris'\n};\n\n// Calcul J-2 (il y a 2 jours)\nconst targetDate = new Date(now);\ntargetDate.setDate(targetDate.getDate() - 2);\n\n// Debut du jour J-2 (00:00:00.000 Europe/Paris)\nconst dateStart = new Date(targetDate);\ndateStart.setHours(0, 0, 0, 0);\n\n// Fin du jour J-2 (23:59:59.999 Europe/Paris)\nconst dateEnd = new Date(targetDate);\ndateEnd.setHours(23, 59, 59, 999);\n\nconst dateStartISO = dateStart.toISOString();\nconst dateEndISO = dateEnd.toISOString();\nconst dateTargetFR = targetDate.toLocaleDateString('fr-FR', {\n  weekday: 'long',\n  day: 'numeric',\n  month: 'long',\n  year: 'numeric',\n  timeZone: 'Europe/Paris'\n});\n\nconsole.log(JSON.stringify({\n  step: 'initContext',\n  status: 'success',\n  dateStart: dateStartISO,\n  dateEnd: dateEndISO,\n  dateTargetFR: dateTargetFR,\n  timestamp: now.toISOString()\n}));\n\nreturn {\n  dateStart: dateStartISO,\n  dateEnd: dateEndISO,\n  dateTargetFR: dateTargetFR,\n  workflow_context: workflow_context\n};"
-              }
-            },
-            {
-              "name": "queryInterventions",
-              "type": "notion/v1/queryDatabase",
-              "parameters": {
-                "databaseId": "${env.NOTION_DB_INTERVENTIONS_ARTISAN}",
-                "filter": {
-                  "and": [
-                    {
-                      "property": "Statut",
-                      "select": {
-                        "equals": "Termin\u00e9"
-                      }
-                    },
-                    {
-                      "property": "Suivi Envoyé",
-                      "checkbox": {
-                        "equals": false
-                      }
-                    },
-                    {
-                      "property": "Date Intervention",
-                      "date": {
-                        "on_or_after": "${initContext.dateStart}"
-                      }
-                    },
-                    {
-                      "property": "Date Intervention",
-                      "date": {
-                        "on_or_before": "${initContext.dateEnd}"
-                      }
-                    }
-                  ]
-                },
-                "sorts": [
-                  {
-                    "property": "Date Intervention",
-                    "direction": "ascending"
-                  }
-                ]
-              }
-            },
-            {
-              "name": "extraireData",
-              "type": "script/v1/javascript",
-              "parameters": {
-                "script": "// ============================================================\n// STEP 3 - Extraction des donnees et verification RGPD\n// Extrait email, nom client, ID intervention de chaque resultat\n// Verifie le droit d'opposition avant envoi\n// Genere un ID de tracabilite RGPD unique par intervention\n// ============================================================\n\nconst results = ${queryInterventions.results} || [];\nconst interventions = [];\nconst skipped = [];\n\nfor (const page of results) {\n  const props = page.properties;\n\n  // Extraction des champs\n  const interventionId = page.id;\n  const clientNom = (props.client_nom && props.client_nom.title\n    ? props.client_nom.title.map(t => t.plain_text).join('')\n    : (props.client_nom && props.client_nom.rich_text\n      ? props.client_nom.rich_text.map(t => t.plain_text).join('')\n      : 'Client'));\n  const email = (props.client_email && props.client_email.email)\n    ? props.client_email.email\n    : null;\n  const typeIntervention = (props.type_intervention && props.type_intervention.select)\n    ? props.type_intervention.select.name\n    : 'Intervention';\n  const dateIntervention = (props.date_intervention && props.date_intervention.date)\n    ? props.date_intervention.date.start\n    : null;\n\n  // Verification : email obligatoire\n  if (!email) {\n    skipped.push({\n      interventionId: interventionId,\n      reason: 'EMAIL_MISSING',\n      timestamp: new Date().toISOString()\n    });\n    console.log(JSON.stringify({\n      step: 'extraireData',\n      status: 'skipped',\n      interventionId: interventionId,\n      reason: 'EMAIL_MISSING'\n    }));\n    continue;\n  }\n\n  // Verification droit d'opposition RGPD (Art. 21)\n  const oppositionProspection = (props.opposition_prospection && props.opposition_prospection.checkbox)\n    ? props.opposition_prospection.checkbox\n    : false;\n\n  if (oppositionProspection === true) {\n    skipped.push({\n      interventionId: interventionId,\n      reason: 'RGPD_OPPOSITION',\n      timestamp: new Date().toISOString()\n    });\n    console.log(JSON.stringify({\n      step: 'extraireData',\n      status: 'skipped',\n      interventionId: interventionId,\n      reason: 'RGPD_OPPOSITION'\n    }));\n    continue;\n  }\n\n  // Generation ID tracabilite RGPD\n  const rgpdTraceId = 'SUIVI-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);\n\n  interventions.push({\n    interventionId: interventionId,\n    clientNom: clientNom,\n    email: email,\n    typeIntervention: typeIntervention,\n    dateIntervention: dateIntervention,\n    rgpdTraceId: rgpdTraceId\n  });\n}\n\nconsole.log(JSON.stringify({\n  step: 'extraireData',\n  status: 'success',\n  totalFound: results.length,\n  eligibleCount: interventions.length,\n  skippedCount: skipped.length,\n  timestamp: new Date().toISOString()\n}));\n\nreturn {\n  interventions: interventions,\n  skipped: skipped,\n  totalFound: results.length,\n  eligibleCount: interventions.length\n};"
-              }
-            },
-            {
-              "name": "checkInterventions",
-              "type": "flow-control/v1/condition",
-              "parameters": {
-                "condition": "${extraireData.eligibleCount} > 0",
-                "ifTrue": [
-                  {
-                    "name": "loopInterventions",
-                    "type": "flow-control/v1/loop",
-                    "parameters": {
-                      "items": "${extraireData.interventions}",
-                      "tasks": [
-                        {
-                          "name": "sendSatisfactionEmail",
-                          "type": "gmail/v1/sendEmail",
-                          "parameters": {
-                            "to": "${loopInterventions.currentItem.email}",
-                            "subject": "${loopInterventions.currentItem.clientNom}, votre avis compte pour nous !",
-                            "contentType": "text/html",
-                            "body": "<!DOCTYPE html>\n<html lang=\"fr\">\n<head>\n  <meta charset=\"UTF-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n  <title>Votre avis compte</title>\n</head>\n<body style=\"margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: #333333; line-height: 1.6; background-color: #f4f4f7;\">\n  <table role=\"presentation\" cellspacing=\"0\" cellpadding=\"0\" border=\"0\" width=\"100%\" style=\"background-color: #f4f4f7;\">\n    <tr>\n      <td style=\"padding: 20px 0;\">\n        <table role=\"presentation\" cellspacing=\"0\" cellpadding=\"0\" border=\"0\" width=\"600\" style=\"margin: 0 auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.08);\">\n          <!-- HEADER PURPLE -->\n          <tr>\n            <td style=\"background-color: #7c3aed; padding: 32px 40px; text-align: center;\">\n              <h1 style=\"color: #ffffff; margin: 0; font-size: 24px; font-weight: 600;\">Merci pour votre confiance</h1>\n              <p style=\"color: #e0d4f7; margin: 8px 0 0 0; font-size: 14px;\">Votre satisfaction est notre priorit&eacute;</p>\n            </td>\n          </tr>\n          <!-- CONTENT -->\n          <tr>\n            <td style=\"padding: 40px;\">\n              <p style=\"margin: 0 0 16px 0; font-size: 16px;\">Bonjour <strong>${loopInterventions.currentItem.clientNom}</strong>,</p>\n              <p style=\"margin: 0 0 16px 0; font-size: 16px;\">Nous esp&eacute;rons que notre intervention <strong>${loopInterventions.currentItem.typeIntervention}</strong> a r&eacute;pondu &agrave; vos attentes.</p>\n              <p style=\"margin: 0 0 24px 0; font-size: 16px;\">&Ecirc;tes-vous satisfait(e) du travail r&eacute;alis&eacute; ?</p>\n              <!-- SATISFACTION BOX -->\n              <table role=\"presentation\" cellspacing=\"0\" cellpadding=\"0\" border=\"0\" width=\"100%\">\n                <tr>\n                  <td style=\"background-color: #faf5ff; border: 1px solid #e9d5ff; border-radius: 8px; padding: 28px; text-align: center;\">\n                    <p style=\"margin: 0 0 8px 0; font-size: 18px; font-weight: 600; color: #7c3aed;\">Votre avis nous aide &agrave; progresser</p>\n                    <p style=\"margin: 0 0 20px 0; font-size: 14px; color: #6b7280;\">Partagez votre exp&eacute;rience en 30 secondes sur Google</p>\n                    <!-- GOOGLE REVIEW BUTTON -->\n                    <table role=\"presentation\" cellspacing=\"0\" cellpadding=\"0\" border=\"0\" style=\"margin: 0 auto;\">\n                      <tr>\n                        <td style=\"border-radius: 6px; background-color: #7c3aed;\">\n                          <a href=\"${env.ARTISAN_GOOGLE_REVIEW_LINK}\" target=\"_blank\" style=\"display: inline-block; padding: 14px 32px; color: #ffffff; text-decoration: none; font-size: 16px; font-weight: 600; letter-spacing: 0.3px;\">Laisser un avis Google &#9733;</a>\n                        </td>\n                      </tr>\n                    </table>\n                    <p style=\"margin: 16px 0 0 0; font-size: 12px; color: #9ca3af;\">Cela ne prend que quelques instants et nous aide &eacute;norm&eacute;ment !</p>\n                  </td>\n                </tr>\n              </table>\n              <p style=\"margin: 24px 0 0 0; font-size: 16px;\">Si vous avez des remarques ou des questions, n'h&eacute;sitez pas &agrave; nous contacter directement en r&eacute;pondant &agrave; cet email.</p>\n              <p style=\"margin: 24px 0 0 0; font-size: 16px;\">Cordialement,<br><strong>${env.ARTISAN_NOM_ENTREPRISE}</strong></p>\n            </td>\n          </tr>\n          <!-- RGPD FOOTER -->\n          <tr>\n            <td style=\"padding: 24px 40px; background-color: #f9fafb; border-top: 1px solid #e5e7eb;\">\n              <p style=\"margin: 0; font-size: 11px; color: #9ca3af; line-height: 1.5;\">\n                <strong>Protection de vos donn&eacute;es (RGPD)</strong><br>\n                Ce message est envoy&eacute; sur la base de notre <strong>int&eacute;r&ecirc;t l&eacute;gitime</strong> (article 6.1.f du RGPD) en tant que prestataire ayant r&eacute;alis&eacute; une intervention pour vous. Vos donn&eacute;es (nom, email) sont utilis&eacute;es uniquement pour ce suivi de satisfaction.\n              </p>\n              <p style=\"margin: 8px 0 0 0; font-size: 11px; color: #9ca3af; line-height: 1.5;\">\n                <strong>Vos droits :</strong> Vous pouvez &agrave; tout moment vous opposer &agrave; ces envois en r&eacute;pondant &laquo; STOP &raquo; &agrave; cet email ou en nous contactant &agrave; ${env.ARTISAN_EMAIL_RGPD}. Vous disposez &eacute;galement d'un droit d'acc&egrave;s, de rectification et de suppression de vos donn&eacute;es.\n              </p>\n              <p style=\"margin: 8px 0 0 0; font-size: 10px; color: #d1d5db;\">\n                ID tra&ccedil;abilit&eacute; : ${loopInterventions.currentItem.rgpdTraceId}\n              </p>\n            </td>\n          </tr>\n        </table>\n      </td>\n    </tr>\n  </table>\n</body>\n</html>"
-                          }
-                        },
-                        {
-                          "name": "updateNotionSuivi",
-                          "type": "notion/v1/updateDatabaseItem",
-                          "parameters": {
-                            "pageId": "${loopInterventions.currentItem.interventionId}",
-                            "properties": {
-                              "Suivi Envoyé": {
-                                "checkbox": true
-                              },
-                              "Avis Google Demandé": {
-                                "checkbox": true
-                              },
-                              "Date Suivi Envoyé": {
-                                "date": {
-                                  "start": "${initContext.workflow_context.startTime}"
-                                }
-                              },
-                              "RGPD Trace ID": {
-                                "rich_text": [
-                                  {
-                                    "text": {
-                                      "content": "${loopInterventions.currentItem.rgpdTraceId}"
-                                    }
-                                  }
-                                ]
-                              }
-                            }
-                          }
-                        },
-                        {
-                          "name": "logSuccess",
-                          "type": "script/v1/javascript",
-                          "parameters": {
-                            "script": "// ============================================================\n// STEP 8 - Log succes avec email masque (RGPD)\n// Masque les donnees personnelles dans les logs\n// Conserve la tracabilite via rgpdTraceId\n// ============================================================\n\nconst item = ${loopInterventions.currentItem};\nconst email = item.email || '';\nconst maskedEmail = email.replace(/(.{2}).*(@.*)/, '$1***$2');\n\nconst log = {\n  step: 'logSuccess',\n  status: 'success',\n  interventionId: item.interventionId,\n  rgpdTraceId: item.rgpdTraceId,\n  clientEmail: maskedEmail,\n  typeIntervention: item.typeIntervention,\n  emailSent: true,\n  notionUpdated: true,\n  timestamp: new Date().toISOString()\n};\n\nconsole.log(JSON.stringify(log));\n\nreturn log;"
-                          }
-                        }
-                      ]
-                    }
-                  }
-                ],
-                "ifFalse": [
-                  {
-                    "name": "logNoInterventions",
-                    "type": "script/v1/javascript",
-                    "parameters": {
-                      "script": "// Aucune intervention eligible trouvee\nconst log = {\n  step: 'checkInterventions',\n  status: 'skipped',\n  message: 'Aucune intervention eligible pour le suivi J-2',\n  totalFound: ${extraireData.totalFound},\n  eligibleCount: 0,\n  timestamp: new Date().toISOString()\n};\n\nconsole.log(JSON.stringify(log));\n\nreturn log;"
-                    }
-                  }
-                ]
-              }
-            },
-            {
-              "name": "summary",
-              "type": "script/v1/javascript",
-              "parameters": {
-                "script": "// ============================================================\n// STEP 9 - Recapitulatif fin de workflow\n// Resume complet de l'execution pour monitoring\n// ============================================================\n\nconst startTime = ${initContext.workflow_context.startTime};\nconst now = new Date();\nconst durationMs = now.getTime() - new Date(startTime).getTime();\n\nconst summary = {\n  step: 'workflow_completed',\n  status: 'success',\n  workflowName: 'artisan-suivi-post-intervention-v1.0',\n  dateTargetFR: ${initContext.dateTargetFR},\n  totalInterventionsFound: ${extraireData.totalFound},\n  eligibleInterventions: ${extraireData.eligibleCount},\n  skippedInterventions: ${extraireData.skipped}.length,\n  skippedDetails: ${extraireData.skipped},\n  emailsSent: ${extraireData.eligibleCount},\n  notionUpdated: ${extraireData.eligibleCount},\n  durationMs: durationMs,\n  completedAt: now.toISOString()\n};\n\nconsole.log(JSON.stringify(summary));\n\nreturn summary;"
-              }
-            }
-          ],
-          "catch": [
-            {
-              "name": "handleError",
-              "type": "script/v1/javascript",
-              "parameters": {
-                "script": "// ============================================================\n// ERROR HANDLER - Gestion centralisee des erreurs\n// Log structure sans donnees personnelles\n// ============================================================\n\nconst error = ${error} || {};\n\nconst errorLog = {\n  step: 'error_handler',\n  status: 'error',\n  workflowName: 'artisan-suivi-post-intervention-v1.0',\n  errorCode: error.type || error.name || 'UNKNOWN_ERROR',\n  errorMessage: error.message || 'Erreur inconnue dans le workflow de suivi post-intervention',\n  errorTask: error.taskName || 'unknown',\n  severity: 'high',\n  timestamp: new Date().toISOString()\n};\n\nconsole.error(JSON.stringify(errorLog));\n\nreturn errorLog;"
-              }
-            }
-          ]
-        }
-      }
-    ],
-    "triggers": [
-      {
-        "name": "scheduleTrigger",
-        "type": "schedule/v1/trigger",
-        "parameters": {
-          "cron": "0 0 10 * * *",
-          "timezone": "Europe/Paris",
-          "description": "Declenchement quotidien a 10h00 (Europe/Paris) pour suivi post-intervention J-2"
-        }
-      }
-    ]
-  },
   "label": "artisan-suivi-post-intervention-v1.0",
   "description": "Suivi post-intervention J-2 avec demande d'avis Google. Interroge Notion pour les interventions terminees il y a 2 jours, envoie un email de satisfaction avec bouton Google Review, et met a jour le statut de suivi. Base legale RGPD: interet legitime (art. 6.1.f).",
-  "version": 1,
-  "env": {
-    "required": [
-      "NOTION_DB_INTERVENTIONS_ARTISAN",
-      "ARTISAN_GOOGLE_REVIEW_LINK",
-      "ARTISAN_NOM_ENTREPRISE",
-      "ARTISAN_EMAIL_RGPD"
-    ]
-  }
+  "inputs": [],
+  "triggers": [
+    {
+      "label": "Declenchement quotidien 10h00",
+      "name": "scheduleTrigger",
+      "type": "schedule/v1/cron",
+      "parameters": {
+        "cron": "0 0 10 * * *",
+        "timezone": "Europe/Paris",
+        "description": "Declenchement quotidien a 10h00 (Europe/Paris) pour suivi post-intervention J-2"
+      }
+    }
+  ],
+  "tasks": [
+    {
+      "label": "Gestion erreurs globale",
+      "name": "tryCatchWrapper",
+      "type": "on-error/v1",
+      "parameters": {
+        "main-branch": [
+          {
+            "label": "Initialisation et calcul plage J-2",
+            "name": "initContext",
+            "type": "script/v1/javascript",
+            "parameters": {
+              "script": "// ============================================================\n// STEP 1 - Initialisation et calcul plage J-2\n// Calcule la fenetre de dates pour les interventions terminées\n// il y a exactement 2 jours (suivi post-intervention J-2)\n// ============================================================\n\nconst now = new Date();\nconst workflow_context = {\n  workflowName: 'artisan-suivi-post-intervention-v1.0',\n  startTime: now.toISOString(),\n  trigger: 'schedule',\n  timezone: 'Europe/Paris'\n};\n\n// Calcul J-2 (il y a 2 jours)\nconst targetDate = new Date(now);\ntargetDate.setDate(targetDate.getDate() - 2);\n\n// Debut du jour J-2 (00:00:00.000 Europe/Paris)\nconst dateStart = new Date(targetDate);\ndateStart.setHours(0, 0, 0, 0);\n\n// Fin du jour J-2 (23:59:59.999 Europe/Paris)\nconst dateEnd = new Date(targetDate);\ndateEnd.setHours(23, 59, 59, 999);\n\nconst dateStartISO = dateStart.toISOString();\nconst dateEndISO = dateEnd.toISOString();\nconst dateTargetFR = targetDate.toLocaleDateString('fr-FR', {\n  weekday: 'long',\n  day: 'numeric',\n  month: 'long',\n  year: 'numeric',\n  timeZone: 'Europe/Paris'\n});\n\nconsole.log(JSON.stringify({\n  step: 'initContext',\n  status: 'success',\n  dateStart: dateStartISO,\n  dateEnd: dateEndISO,\n  dateTargetFR: dateTargetFR,\n  timestamp: now.toISOString()\n}));\n\nreturn {\n  dateStart: dateStartISO,\n  dateEnd: dateEndISO,\n  dateTargetFR: dateTargetFR,\n  workflow_context: workflow_context\n};"
+            }
+          },
+          {
+            "label": "Requete Notion interventions J-2",
+            "name": "queryInterventions",
+            "type": "notion/v1/listDatabaseItems",
+            "parameters": {
+              "databaseId": "${env.NOTION_DB_INTERVENTIONS_ARTISAN}",
+              "filter": {
+                "and": [
+                  {
+                    "property": "Statut",
+                    "select": {
+                      "equals": "Termin\u00e9"
+                    }
+                  },
+                  {
+                    "property": "Suivi Envoy\u00e9",
+                    "checkbox": {
+                      "equals": false
+                    }
+                  },
+                  {
+                    "property": "Date Intervention",
+                    "date": {
+                      "on_or_after": "${initContext.dateStart}"
+                    }
+                  },
+                  {
+                    "property": "Date Intervention",
+                    "date": {
+                      "on_or_before": "${initContext.dateEnd}"
+                    }
+                  }
+                ]
+              },
+              "sorts": [
+                {
+                  "property": "Date Intervention",
+                  "direction": "ascending"
+                }
+              ]
+            }
+          },
+          {
+            "label": "Extraction donnees et verification RGPD",
+            "name": "extraireData",
+            "type": "script/v1/javascript",
+            "parameters": {
+              "script": "// ============================================================\n// STEP 3 - Extraction des donnees et verification RGPD\n// Extrait email, nom client, ID intervention de chaque resultat\n// Verifie le droit d'opposition avant envoi\n// Genere un ID de tracabilite RGPD unique par intervention\n// ============================================================\n\nconst results = ${queryInterventions.results} || [];\nconst interventions = [];\nconst skipped = [];\n\nfor (const page of results) {\n  const props = page.properties;\n\n  // Extraction des champs\n  const interventionId = page.id;\n  const clientNom = (props.client_nom && props.client_nom.title\n    ? props.client_nom.title.map(t => t.plain_text).join('')\n    : (props.client_nom && props.client_nom.rich_text\n      ? props.client_nom.rich_text.map(t => t.plain_text).join('')\n      : 'Client'));\n  const email = (props.client_email && props.client_email.email)\n    ? props.client_email.email\n    : null;\n  const typeIntervention = (props.type_intervention && props.type_intervention.select)\n    ? props.type_intervention.select.name\n    : 'Intervention';\n  const dateIntervention = (props.date_intervention && props.date_intervention.date)\n    ? props.date_intervention.date.start\n    : null;\n\n  // Verification : email obligatoire\n  if (!email) {\n    skipped.push({\n      interventionId: interventionId,\n      reason: 'EMAIL_MISSING',\n      timestamp: new Date().toISOString()\n    });\n    console.log(JSON.stringify({\n      step: 'extraireData',\n      status: 'skipped',\n      interventionId: interventionId,\n      reason: 'EMAIL_MISSING'\n    }));\n    continue;\n  }\n\n  // Verification droit d'opposition RGPD (Art. 21)\n  const oppositionProspection = (props.opposition_prospection && props.opposition_prospection.checkbox)\n    ? props.opposition_prospection.checkbox\n    : false;\n\n  if (oppositionProspection === true) {\n    skipped.push({\n      interventionId: interventionId,\n      reason: 'RGPD_OPPOSITION',\n      timestamp: new Date().toISOString()\n    });\n    console.log(JSON.stringify({\n      step: 'extraireData',\n      status: 'skipped',\n      interventionId: interventionId,\n      reason: 'RGPD_OPPOSITION'\n    }));\n    continue;\n  }\n\n  // Generation ID tracabilite RGPD\n  const rgpdTraceId = 'SUIVI-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);\n\n  interventions.push({\n    interventionId: interventionId,\n    clientNom: clientNom,\n    email: email,\n    typeIntervention: typeIntervention,\n    dateIntervention: dateIntervention,\n    rgpdTraceId: rgpdTraceId\n  });\n}\n\nconsole.log(JSON.stringify({\n  step: 'extraireData',\n  status: 'success',\n  totalFound: results.length,\n  eligibleCount: interventions.length,\n  skippedCount: skipped.length,\n  timestamp: new Date().toISOString()\n}));\n\nreturn {\n  interventions: interventions,\n  skipped: skipped,\n  totalFound: results.length,\n  eligibleCount: interventions.length\n};"
+            }
+          },
+          {
+            "label": "Verification interventions eligibles",
+            "name": "checkInterventions",
+            "type": "condition/v1",
+            "parameters": {
+              "rawExpression": true,
+              "expression": "=${extraireData.eligibleCount} > 0",
+              "caseTrue": [
+                {
+                  "label": "Boucle sur chaque intervention",
+                  "name": "loopInterventions",
+                  "type": "each/v1",
+                  "parameters": {
+                    "items": "${extraireData.interventions}",
+                    "iteratee": [
+                      {
+                        "label": "Envoi email satisfaction + avis Google",
+                        "name": "sendSatisfactionEmail",
+                        "type": "googleMail/v1/sendEmail",
+                        "parameters": {
+                          "to": "${loopInterventions.email}",
+                          "subject": "${loopInterventions.clientNom}, votre avis compte pour nous !",
+                          "contentType": "text/html",
+                          "body": "<!DOCTYPE html>\n<html lang=\"fr\">\n<head>\n  <meta charset=\"UTF-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n  <title>Votre avis compte</title>\n</head>\n<body style=\"margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: #333333; line-height: 1.6; background-color: #f4f4f7;\">\n  <table role=\"presentation\" cellspacing=\"0\" cellpadding=\"0\" border=\"0\" width=\"100%\" style=\"background-color: #f4f4f7;\">\n    <tr>\n      <td style=\"padding: 20px 0;\">\n        <table role=\"presentation\" cellspacing=\"0\" cellpadding=\"0\" border=\"0\" width=\"600\" style=\"margin: 0 auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.08);\">\n          <!-- HEADER PURPLE -->\n          <tr>\n            <td style=\"background-color: #7c3aed; padding: 32px 40px; text-align: center;\">\n              <h1 style=\"color: #ffffff; margin: 0; font-size: 24px; font-weight: 600;\">Merci pour votre confiance</h1>\n              <p style=\"color: #e0d4f7; margin: 8px 0 0 0; font-size: 14px;\">Votre satisfaction est notre priorit&eacute;</p>\n            </td>\n          </tr>\n          <!-- CONTENT -->\n          <tr>\n            <td style=\"padding: 40px;\">\n              <p style=\"margin: 0 0 16px 0; font-size: 16px;\">Bonjour <strong>${loopInterventions.clientNom}</strong>,</p>\n              <p style=\"margin: 0 0 16px 0; font-size: 16px;\">Nous esp&eacute;rons que notre intervention <strong>${loopInterventions.typeIntervention}</strong> a r&eacute;pondu &agrave; vos attentes.</p>\n              <p style=\"margin: 0 0 24px 0; font-size: 16px;\">&Ecirc;tes-vous satisfait(e) du travail r&eacute;alis&eacute; ?</p>\n              <!-- SATISFACTION BOX -->\n              <table role=\"presentation\" cellspacing=\"0\" cellpadding=\"0\" border=\"0\" width=\"100%\">\n                <tr>\n                  <td style=\"background-color: #faf5ff; border: 1px solid #e9d5ff; border-radius: 8px; padding: 28px; text-align: center;\">\n                    <p style=\"margin: 0 0 8px 0; font-size: 18px; font-weight: 600; color: #7c3aed;\">Votre avis nous aide &agrave; progresser</p>\n                    <p style=\"margin: 0 0 20px 0; font-size: 14px; color: #6b7280;\">Partagez votre exp&eacute;rience en 30 secondes sur Google</p>\n                    <!-- GOOGLE REVIEW BUTTON -->\n                    <table role=\"presentation\" cellspacing=\"0\" cellpadding=\"0\" border=\"0\" style=\"margin: 0 auto;\">\n                      <tr>\n                        <td style=\"border-radius: 6px; background-color: #7c3aed;\">\n                          <a href=\"${env.ARTISAN_GOOGLE_REVIEW_LINK}\" target=\"_blank\" style=\"display: inline-block; padding: 14px 32px; color: #ffffff; text-decoration: none; font-size: 16px; font-weight: 600; letter-spacing: 0.3px;\">Laisser un avis Google &#9733;</a>\n                        </td>\n                      </tr>\n                    </table>\n                    <p style=\"margin: 16px 0 0 0; font-size: 12px; color: #9ca3af;\">Cela ne prend que quelques instants et nous aide &eacute;norm&eacute;ment !</p>\n                  </td>\n                </tr>\n              </table>\n              <p style=\"margin: 24px 0 0 0; font-size: 16px;\">Si vous avez des remarques ou des questions, n'h&eacute;sitez pas &agrave; nous contacter directement en r&eacute;pondant &agrave; cet email.</p>\n              <p style=\"margin: 24px 0 0 0; font-size: 16px;\">Cordialement,<br><strong>${env.ARTISAN_NOM_ENTREPRISE}</strong></p>\n            </td>\n          </tr>\n          <!-- RGPD FOOTER -->\n          <tr>\n            <td style=\"padding: 24px 40px; background-color: #f9fafb; border-top: 1px solid #e5e7eb;\">\n              <p style=\"margin: 0; font-size: 11px; color: #9ca3af; line-height: 1.5;\">\n                <strong>Protection de vos donn&eacute;es (RGPD)</strong><br>\n                Ce message est envoy&eacute; sur la base de notre <strong>int&eacute;r&ecirc;t l&eacute;gitime</strong> (article 6.1.f du RGPD) en tant que prestataire ayant r&eacute;alis&eacute; une intervention pour vous. Vos donn&eacute;es (nom, email) sont utilis&eacute;es uniquement pour ce suivi de satisfaction.\n              </p>\n              <p style=\"margin: 8px 0 0 0; font-size: 11px; color: #9ca3af; line-height: 1.5;\">\n                <strong>Vos droits :</strong> Vous pouvez &agrave; tout moment vous opposer &agrave; ces envois en r&eacute;pondant &laquo; STOP &raquo; &agrave; cet email ou en nous contactant &agrave; ${env.ARTISAN_EMAIL_RGPD}. Vous disposez &eacute;galement d'un droit d'acc&egrave;s, de rectification et de suppression de vos donn&eacute;es.\n              </p>\n              <p style=\"margin: 8px 0 0 0; font-size: 10px; color: #d1d5db;\">\n                ID tra&ccedil;abilit&eacute; : ${loopInterventions.rgpdTraceId}\n              </p>\n            </td>\n          </tr>\n        </table>\n      </td>\n    </tr>\n  </table>\n</body>\n</html>"
+                        }
+                      },
+                      {
+                        "label": "Mise a jour Notion suivi envoye",
+                        "name": "updateNotionSuivi",
+                        "type": "notion/v1/updateDatabaseItem",
+                        "parameters": {
+                          "pageId": "${loopInterventions.interventionId}",
+                          "properties": {
+                            "Suivi Envoy\u00e9": {
+                              "checkbox": true
+                            },
+                            "Avis Google Demand\u00e9": {
+                              "checkbox": true
+                            },
+                            "Date Suivi Envoy\u00e9": {
+                              "date": {
+                                "start": "${initContext.workflow_context.startTime}"
+                              }
+                            },
+                            "RGPD Trace ID": {
+                              "rich_text": [
+                                {
+                                  "text": {
+                                    "content": "${loopInterventions.rgpdTraceId}"
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "label": "Log succes avec email masque",
+                        "name": "logSuccess",
+                        "type": "script/v1/javascript",
+                        "parameters": {
+                          "script": "// ============================================================\n// STEP 8 - Log succes avec email masque (RGPD)\n// Masque les donnees personnelles dans les logs\n// Conserve la tracabilite via rgpdTraceId\n// ============================================================\n\nconst item = ${loopInterventions};\nconst email = item.email || '';\nconst maskedEmail = email.replace(/(.{2}).*(@.*)/, '$1***$2');\n\nconst log = {\n  step: 'logSuccess',\n  status: 'success',\n  interventionId: item.interventionId,\n  rgpdTraceId: item.rgpdTraceId,\n  clientEmail: maskedEmail,\n  typeIntervention: item.typeIntervention,\n  emailSent: true,\n  notionUpdated: true,\n  timestamp: new Date().toISOString()\n};\n\nconsole.log(JSON.stringify(log));\n\nreturn log;"
+                        }
+                      }
+                    ]
+                  }
+                }
+              ],
+              "caseFalse": [
+                {
+                  "label": "Log aucune intervention eligible",
+                  "name": "logNoInterventions",
+                  "type": "script/v1/javascript",
+                  "parameters": {
+                    "script": "// Aucune intervention eligible trouvee\nconst log = {\n  step: 'checkInterventions',\n  status: 'skipped',\n  message: 'Aucune intervention eligible pour le suivi J-2',\n  totalFound: ${extraireData.totalFound},\n  eligibleCount: 0,\n  timestamp: new Date().toISOString()\n};\n\nconsole.log(JSON.stringify(log));\n\nreturn log;"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "label": "Recapitulatif fin de workflow",
+            "name": "summary",
+            "type": "script/v1/javascript",
+            "parameters": {
+              "script": "// ============================================================\n// STEP 9 - Recapitulatif fin de workflow\n// Resume complet de l'execution pour monitoring\n// ============================================================\n\nconst startTime = ${initContext.workflow_context.startTime};\nconst now = new Date();\nconst durationMs = now.getTime() - new Date(startTime).getTime();\n\nconst summary = {\n  step: 'workflow_completed',\n  status: 'success',\n  workflowName: 'artisan-suivi-post-intervention-v1.0',\n  dateTargetFR: ${initContext.dateTargetFR},\n  totalInterventionsFound: ${extraireData.totalFound},\n  eligibleInterventions: ${extraireData.eligibleCount},\n  skippedInterventions: ${extraireData.skipped}.length,\n  skippedDetails: ${extraireData.skipped},\n  emailsSent: ${extraireData.eligibleCount},\n  notionUpdated: ${extraireData.eligibleCount},\n  durationMs: durationMs,\n  completedAt: now.toISOString()\n};\n\nconsole.log(JSON.stringify(summary));\n\nreturn summary;"
+            }
+          }
+        ],
+        "on-error-branch": [
+          {
+            "label": "Gestion centralisee des erreurs",
+            "name": "handleError",
+            "type": "script/v1/javascript",
+            "parameters": {
+              "script": "// ============================================================\n// ERROR HANDLER - Gestion centralisee des erreurs\n// Log structure sans donnees personnelles\n// ============================================================\n\nconst error = ${error} || {};\n\nconst errorLog = {\n  step: 'error_handler',\n  status: 'error',\n  workflowName: 'artisan-suivi-post-intervention-v1.0',\n  errorCode: error.type || error.name || 'UNKNOWN_ERROR',\n  errorMessage: error.message || 'Erreur inconnue dans le workflow de suivi post-intervention',\n  errorTask: error.taskName || 'unknown',\n  severity: 'high',\n  timestamp: new Date().toISOString()\n};\n\nconsole.error(JSON.stringify(errorLog));\n\nreturn errorLog;"
+            }
+          }
+        ]
+      }
+    }
+  ]
 }
