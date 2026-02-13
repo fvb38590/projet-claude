@@ -11,6 +11,7 @@ jobs:
     permissions:
       contents: write
       pages: write
+      id-token: write
     steps:
       - uses: actions/checkout@v4
 
@@ -21,5 +22,3 @@ jobs:
           path: '.'
 
       - uses: actions/deploy-pages@v4
-        with:
-          environment: github-pages
