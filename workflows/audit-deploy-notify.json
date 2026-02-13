@@ -1,0 +1,47 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "event": "file_created",
+        "path": "=/votre/chemin/local/public/audits/"
+      },
+      "id": "1",
+      "name": "Local File Trigger",
+      "type": "n8n-nodes-base.localFileTrigger",
+      "typeVersion": 1,
+      "position": [100, 300]
+    },
+    {
+      "parameters": {
+        "command": "bash deploy.sh"
+      },
+      "id": "2",
+      "name": "Execute Deploy",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [350, 300]
+    },
+    {
+      "parameters": {
+        "fromEmail": "automat@vazbolotaconsulting.fr",
+        "toEmail": "={{ $json[\"client_email\"] }}",
+        "subject": "Votre Audit d'Automatisation est pret",
+        "text": "Bonjour,\n\nVotre audit personnalise est disponible ici : https://vazbolotaconsulting.fr/public/audits/{{ $json[\"fileName\"] }}\n\nCordialement,\nL'equipe Vazbolota",
+        "options": {}
+      },
+      "id": "3",
+      "name": "Send Audit Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 1,
+      "position": [600, 300]
+    }
+  ],
+  "connections": {
+    "Local File Trigger": {
+      "main": [[{ "node": "Execute Deploy", "type": "main", "index": 0 }]]
+    },
+    "Execute Deploy": {
+      "main": [[{ "node": "Send Audit Email", "type": "main", "index": 0 }]]
+    }
+  }
+}

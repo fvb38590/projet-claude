@@ -1,0 +1,245 @@
+{
+  "name": "RDV Kiné Auto",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "rdv-kine",
+        "responseMode": "onReceived",
+        "responseData": "allEntries",
+        "options": {}
+      },
+      "id": "256a6085-d14b-4796-bccf-1367fdd82bb5",
+      "name": "Webhook RDV",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        320,
+        200
+      ],
+      "webhookId": "81a39d44-ca62-481c-948b-d8b85e34b442"
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "calendarId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "=== CONFIGURER: ID du calendrier Google ==="
+        },
+        "title": "={{ $json.body.patient_nom }} - RDV Kiné",
+        "start": "={{ $json.body.date_rdv }}",
+        "end": "={{ $json.body.date_fin }}",
+        "additionalFields": {
+          "description": "Patient: {{ $json.body.patient_nom }}\nTéléphone: {{ $json.body.telephone }}\nMotif: {{ $json.body.motif }}"
+        }
+      },
+      "id": "8c998c35-b37c-4f5d-99f4-7d94cdbffa13",
+      "name": "Google Calendar",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 5,
+      "position": [
+        540,
+        200
+      ],
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "=== CONFIGURER: Credentials Google Calendar ==="
+        }
+      }
+    },
+    {
+      "parameters": {
+        "channel": {
+          "__rl": true,
+          "mode": "name",
+          "value": "=== CONFIGURER: #nom-du-channel ==="
+        },
+        "message": ":calendar: *Nouveau RDV Kiné*\n\n*Patient:* {{ $('Webhook RDV').item.json.body.patient_nom }}\n*Date:* {{ $('Webhook RDV').item.json.body.date_rdv }}\n*Téléphone:* {{ $('Webhook RDV').item.json.body.telephone }}\n*Motif:* {{ $('Webhook RDV').item.json.body.motif }}",
+        "otherOptions": {}
+      },
+      "id": "fca5b096-3e04-41ee-9023-486f4ff09e2e",
+      "name": "Slack Notification",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 4,
+      "position": [
+        760,
+        200
+      ],
+      "credentials": {
+        "slackApi": {
+          "id": "=== CONFIGURER: Credentials Slack ==="
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "=== CONFIGURER: ID du Google Sheet ==="
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "=== CONFIGURER: Nom de l'onglet ==="
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Date RDV": "={{ $('Webhook RDV').item.json.body.date_rdv }}",
+            "Patient": "={{ $('Webhook RDV').item.json.body.patient_nom }}",
+            "Telephone": "={{ $('Webhook RDV').item.json.body.telephone }}",
+            "Motif": "={{ $('Webhook RDV').item.json.body.motif }}",
+            "Event ID Calendar": "={{ $('Google Calendar').item.json.id }}",
+            "Date Creation": "={{ $now.format('dd/MM/yyyy HH:mm') }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "fa74be03-94cc-482b-8e6f-235432c334a0",
+      "name": "Google Sheets Log",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 6,
+      "position": [
+        980,
+        200
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "=== CONFIGURER: Credentials Google Sheets ==="
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "leftValue": "={{ $json.body.patient_nom }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            },
+            {
+              "leftValue": "={{ $json.body.date_rdv }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ]
+        }
+      },
+      "id": "validation-node-001",
+      "name": "Validation Données",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        540,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "error",
+              "value": "Données manquantes: patient_nom ou date_rdv requis"
+            },
+            {
+              "name": "status",
+              "value": "error"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "error-response-001",
+      "name": "Erreur Données",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        760,
+        500
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook RDV": {
+      "main": [
+        [
+          {
+            "node": "Validation Données",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validation Données": {
+      "main": [
+        [
+          {
+            "node": "Google Calendar",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Erreur Données",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Calendar": {
+      "main": [
+        [
+          {
+            "node": "Slack Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack Notification": {
+      "main": [
+        [
+          {
+            "node": "Google Sheets Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "78fa7287-95b3-4efb-ada0-524dc114484f-v2",
+  "meta": {
+    "instanceId": "69ebdbee6d96fef754ade98d90242bdb72a715927d905fe06ec64a187d551d6a"
+  },
+  "id": "pPhYZEYhpIYFIvXX",
+  "tags": []
+}

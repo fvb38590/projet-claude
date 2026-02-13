@@ -8,7 +8,7 @@ leads_*.csv
 *.sh
 *.js
 !deploy.js
-workflows/
+!.github/
 clients/
 docs/
 public/audits/*.html

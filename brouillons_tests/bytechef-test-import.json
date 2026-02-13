@@ -1,0 +1,42 @@
+{
+    "label": "Test Import Pack Artisan",
+    "description": "",
+    "inputs": [],
+    "triggers": [
+        {
+            "label": "Webhook",
+            "name": "trigger_1",
+            "parameters": {},
+            "type": "webhook/v1/autoRespondWithHTTP200"
+        }
+    ],
+    "tasks": [
+        {
+            "clusterElements": {},
+            "description": "",
+            "label": "Script Test",
+            "metadata": {},
+            "name": "script_1",
+            "parameters": {},
+            "type": "script/v1/javascript"
+        },
+        {
+            "label": "Condition",
+            "name": "condition_1",
+            "parameters": {
+                "rawExpression": true,
+                "caseFalse": [],
+                "caseTrue": [],
+                "expression": "{{ true }}"
+            },
+            "type": "condition/v1",
+            "metadata": {
+                "ui": {
+                    "dynamicPropertyTypes": {
+                        "expression": "STRING"
+                    }
+                }
+            }
+        }
+    ]
+}

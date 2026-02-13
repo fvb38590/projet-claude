@@ -1,0 +1,48 @@
+:root{
+  --bg: #071024;
+  --surface: #0f1724;
+  --blue: #3aa0ff;
+  --deep: #1180e6;
+  --muted: #98a0b3;
+  --text: #e6eef8;
+  --radius: 12px;
+  --container: 1100px;
+}
+*{box-sizing:border-box}
+body{font-family:Inter, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; margin:0; color:var(--text); background:var(--bg); -webkit-font-smoothing:antialiased}
+.container{max-width:var(--container); margin:0 auto; padding:2rem}
+.site-header{border-bottom:1px solid rgba(255,255,255,0.04); background:linear-gradient(180deg, rgba(255,255,255,0.01), transparent)}
+.site-header .container{display:flex; align-items:center; justify-content:space-between}
+.brand{font-weight:700; color:var(--blue)}
+.nav a{margin-left:1rem; color:var(--text); text-decoration:none; opacity:0.9}
+.nav a:hover{opacity:1}
+.cta.small{padding:.35rem .6rem; border-radius:8px; background:var(--deep); color:#071024}
+.hero{padding:4rem 0; background:linear-gradient(180deg,#071427 0%, #071024 100%)}
+.hero-inner{display:flex; gap:2rem; align-items:center; justify-content:space-between}
+.hero-copy{flex:1}
+.hero-copy h1{font-size:2rem; margin:0 0 .5rem; color:var(--text)}
+.lead{color:var(--muted); margin:0 0 1rem}
+.hero-visual{width:320px; display:flex; align-items:center; justify-content:center}
+.card{background:var(--surface); border-radius:var(--radius); padding:1.5rem; box-shadow:0 8px 30px rgba(2,6,23,0.6); color:var(--text); text-align:center; border:1px solid rgba(255,255,255,0.02)}
+.section{padding:3rem 0}
+.services .grid, .testimonials .grid{display:grid; grid-template-columns:repeat(3,1fr); gap:1rem}
+.service h3{margin-top:0; color:var(--text)}
+.testimonial{font-style:italic; color:var(--muted)}
+.contact-form{display:grid; gap:.75rem; max-width:600px}
+.contact-form label{display:block}
+.contact-form input, .contact-form textarea{width:100%; padding:.6rem; border:1px solid rgba(255,255,255,0.06); border-radius:8px; background:transparent; color:var(--text)}
+.btn{display:inline-block; padding:.7rem 1rem; border-radius:8px; text-decoration:none; border:1px solid transparent}
+.btn.primary{background:var(--deep); color:#fff}
+.btn.ghost{background:transparent; color:var(--blue); border-color:rgba(255,255,255,0.04)}
+.site-footer{border-top:1px solid rgba(255,255,255,0.03); padding:1rem 0; text-align:center; color:var(--muted)}
+
+/* Responsive */
+@media (max-width:900px){
+  .hero-inner{flex-direction:column}
+  .services .grid, .testimonials .grid{grid-template-columns:1fr}
+  .hero-visual{width:100%}
+}
+@media (max-width:480px){
+  .container{padding:1rem}
+  .hero-copy h1{font-size:1.4rem}
+}

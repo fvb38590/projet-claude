@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Automatisation pour PME — Boostez vos process</title>
+  <link rel="stylesheet" href="styles/styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="container">
+      <div class="brand">Automate PME</div>
+      <nav class="nav">
+        <a href="#services">Services</a>
+        <a href="#testimonials">Témoignages</a>
+        <a href="#contact" class="cta small">Contact</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="container hero-inner">
+        <div class="hero-copy">
+          <h1>Automatisez. Gagnez du temps. Développez votre PME.</h1>
+          <p class="lead">Nous créons des automatisations simples et pérennes pour réduire les tâches répétitives et améliorer la productivité.</p>
+          <p>
+            <a href="#contact" class="btn primary">Demandez un diagnostic gratuit</a>
+            <a href="#services" class="btn ghost">Voir les services</a>
+          </p>
+        </div>
+        <div class="hero-visual" aria-hidden="true">
+          <div class="card">Flux automatisé • CRM • Rappels</div>
+        </div>
+      </div>
+    </section>
+
+    <section id="services" class="section services">
+      <div class="container">
+        <h2>Nos services</h2>
+        <div class="grid">
+          <article class="card service">
+            <h3>Automatisation de rendez-vous</h3>
+            <p>Système de réservation et rappels automatisés pour réduire les absences.</p>
+          </article>
+          <article class="card service">
+            <h3>Capture de leads & suivi</h3>
+            <p>Intégrations CRM et qualification automatique des prospects.</p>
+          </article>
+          <article class="card service">
+            <h3>Simplification des process internes</h3>
+            <p>Automatisation des workflows récurrents (facturation, onboarding, notifications).</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="testimonials" class="section testimonials">
+      <div class="container">
+        <h2>Témoignages</h2>
+        <div class="grid">
+          <blockquote class="testimonial card">« Grâce à l'automatisation, nous avons réduit 40% du temps administratif. » — Sarah, Cabinet</blockquote>
+          <blockquote class="testimonial card">« Mise en place rapide, ROI visible en quelques semaines. » — Julien, TPE</blockquote>
+          <blockquote class="testimonial card">« Support réactif et solution adaptée à notre flux. » — Leila, PME</blockquote>
+        </div>
+      </div>
+    </section>
+
+    <section id="contact" class="section contact">
+      <div class="container">
+        <h2>Contact</h2>
+        <p>Parlez-nous de vos processus — nous proposons un diagnostic gratuit.</p>
+        <form class="contact-form" onsubmit="return sendMail(event)">
+          <label>
+            Nom
+            <input type="text" name="name" required>
+          </label>
+          <label>
+            Email
+            <input type="email" name="email" required>
+          </label>
+          <label>
+            Message
+            <textarea name="message" rows="5" required></textarea>
+          </label>
+          <p>
+            <button type="submit" class="btn primary">Envoyer</button>
+            <a href="mailto:contact@example.com" class="btn ghost">Envoyer par email</a>
+          </p>
+        </form>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">© <span id="year"></span> Automate PME — Solutions pour TPE/PME</div>
+  </footer>
+
+  <script>
+    document.getElementById('year').textContent = new Date().getFullYear();
+    function sendMail(e){
+      e.preventDefault();
+      const f = e.target;
+      const name = encodeURIComponent(f.name.value);
+      const email = encodeURIComponent(f.email.value);
+      const msg = encodeURIComponent(f.message.value);
+      const subject = encodeURIComponent('Demande de contact — Automatisation');
+      const body = `Nom: ${name}%0D%0AEmail: ${email}%0D%0A%0D%0A${msg}`;
+      window.location.href = `mailto:contact@example.com?subject=${subject}&body=${body}`;
+      return false;
+    }
+  </script>
+</body>
+</html>

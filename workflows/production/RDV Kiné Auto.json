@@ -1,0 +1,150 @@
+{
+  "name": "RDV Kiné Auto",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "rdv-kine",
+        "options": {}
+      },
+      "id": "256a6085-d14b-4796-bccf-1367fdd82bb5",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        320,
+        -208
+      ],
+      "webhookId": "81a39d44-ca62-481c-948b-d8b85e34b442"
+    },
+    {
+      "parameters": {},
+      "id": "8c998c35-b37c-4f5d-99f4-7d94cdbffa13",
+      "name": "Google Calendar",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 5,
+      "position": [
+        272,
+        -48
+      ]
+    },
+    {
+      "parameters": {
+        "message": "RDV confirmé: {{ $json.date }}. À bientôt!",
+        "options": {}
+      },
+      "id": "d488e100-a2fd-47b3-8d4e-7f9b002d4732",
+      "name": "Twilio SMS",
+      "type": "n8n-nodes-base.twilio",
+      "typeVersion": 1,
+      "position": [
+        416,
+        -48
+      ],
+      "disabled": true
+    },
+    {
+      "parameters": {},
+      "id": "fca5b096-3e04-41ee-9023-486f4ff09e2e",
+      "name": "Slack Notify",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 4,
+      "position": [
+        640,
+        -48
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "fa74be03-94cc-482b-8e6f-235432c334a0",
+      "name": "Google Sheets Log",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 6,
+      "position": [
+        848,
+        -48
+      ]
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -48,
+        -48
+      ],
+      "id": "57e80b53-a1e1-4ae0-88d1-7f036c0e9f99",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "resource": "mail",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.sendGrid",
+      "typeVersion": 1,
+      "position": [
+        96,
+        -48
+      ],
+      "id": "afec2598-b023-4903-ace4-904b31739649",
+      "name": "Send an email",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.sendgrid.com/v3/mail/send",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer "
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        240,
+        112
+      ],
+      "id": "683be131-7bb0-4aa6-a97e-820cf3228219",
+      "name": "HTTP Request"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        []
+      ]
+    },
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Send an email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "78fa7287-95b3-4efb-ada0-524dc114484f",
+  "meta": {
+    "instanceId": "69ebdbee6d96fef754ade98d90242bdb72a715927d905fe06ec64a187d551d6a"
+  },
+  "id": "pPhYZEYhpIYFIvXX",
+  "tags": []
+}

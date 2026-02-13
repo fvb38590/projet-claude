@@ -1,0 +1,480 @@
+{
+  "definition": {
+    "tasks": [
+      {
+        "label": "Valider & Préparer Données",
+        "name": "preparerDonnees",
+        "type": "script/v1/javascript",
+        "description": "Sanitize input du trigger HTTP, générer Lead ID, préparer le prompt AI",
+        "parameters": {
+          "script": "// ============================================================\n// STEP 1 - Validation minimale + préparation prompt Anthropic\n// ============================================================\n\nvar body = manualHttp200Trigger.body || {};\n\nfunction sanitize(str) {\n  if (!str) return '';\n  return str.toString().trim().replace(/<[^>]*>/g, '').replace(/[<>\\\"'&]/g, '');\n}\n\n// Validation email basique\nvar emailRegex = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;\nvar email = sanitize(body.email || '').toLowerCase();\nif (!email || !emailRegex.test(email)) {\n  return {\n    valid: false,\n    error: 'EMAIL_INVALIDE',\n    message: 'Email manquant ou invalide'\n  };\n}\n\n// Sanitize toutes les données\nvar nom = sanitize(body.nom || '').toUpperCase();\nvar prenom = sanitize(body.prenom || '');\nvar telephone = sanitize(body.telephone || '');\nvar adresseChantier = sanitize(body.adresse_chantier || '');\nvar codePostal = sanitize(body.code_postal || '');\nvar typeTravaux = sanitize(body.type_travaux || 'autre').toLowerCase();\nvar description = sanitize(body.description || '').substring(0, 1000);\nvar urgence = sanitize(body.urgence || 'normale');\nvar source = sanitize(body.source || 'site_web');\nvar budget = sanitize(body.budget || '');\nvar disponibilite = sanitize(body.disponibilite || '');\n\n// Générer Lead ID\nvar leadId = 'LEAD-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9).toUpperCase();\n\n// RGPD\nvar consentement = body.consentement_rgpd === true;\nvar dateSupp = new Date();\ndateSupp.setFullYear(dateSupp.getFullYear() + 3);\n\n// Construire le prompt pour Anthropic AI\nvar prompt = 'Tu es un assistant de qualification de leads pour un artisan du bâtiment.\\n\\n'\n  + 'Analyse ce lead et attribue un score de 0 à 100 basé sur ces critères :\\n'\n  + '- Complétude des informations (nom, tel, adresse, description) : 0-25 pts\\n'\n  + '- Pertinence du type de travaux (travaux courants = plus de points) : 0-20 pts\\n'\n  + '- Urgence déclarée (très urgente=20, urgente=15, normale=5) : 0-20 pts\\n'\n  + '- Zone géographique (code postal renseigné = +10) : 0-10 pts\\n'\n  + '- Budget mentionné (oui = +10) : 0-10 pts\\n'\n  + '- Source (bouche à oreille=15, site_web=10, autre=5) : 0-15 pts\\n\\n'\n  + 'Données du lead :\\n'\n  + '- Nom: ' + nom + ' ' + prenom + '\\n'\n  + '- Email: ' + email + '\\n'\n  + '- Téléphone: ' + (telephone || 'NON RENSEIGNÉ') + '\\n'\n  + '- Adresse chantier: ' + (adresseChantier || 'NON RENSEIGNÉE') + '\\n'\n  + '- Code postal: ' + (codePostal || 'NON RENSEIGNÉ') + '\\n'\n  + '- Type travaux: ' + typeTravaux + '\\n'\n  + '- Description: ' + (description || 'AUCUNE') + '\\n'\n  + '- Urgence: ' + urgence + '\\n'\n  + '- Budget: ' + (budget || 'NON MENTIONNÉ') + '\\n'\n  + '- Disponibilité: ' + (disponibilite || 'NON PRÉCISÉE') + '\\n'\n  + '- Source: ' + source + '\\n\\n'\n  + 'Réponds UNIQUEMENT en JSON strict avec ce format :\\n'\n  + '{\"score\": <number 0-100>, \"niveau\": \"<HOT|WARM|COLD>\", \"raisons\": [\"raison1\", \"raison2\"], \"action_recommandee\": \"<texte court>\"}\\n'\n  + 'Pas de texte avant ni après le JSON.';\n\nreturn {\n  valid: true,\n  lead_id: leadId,\n  nom: nom,\n  prenom: prenom,\n  email: email,\n  telephone: telephone,\n  adresse_chantier: adresseChantier,\n  code_postal: codePostal,\n  type_travaux: typeTravaux,\n  description: description,\n  urgence: urgence,\n  budget: budget,\n  disponibilite: disponibilite,\n  source: source,\n  consentement_rgpd: consentement,\n  date_consentement: new Date().toISOString(),\n  date_suppression_prevue: dateSupp.toISOString(),\n  prompt_ai: prompt,\n  timestamp: new Date().toISOString()\n};"
+        }
+      },
+      {
+        "label": "Vérifier Validité",
+        "name": "verifierValidite",
+        "type": "flow-control/v1/condition",
+        "description": "Vérifie que les données sont valides avant d'appeler l'AI",
+        "parameters": {
+          "conditions": [
+            {
+              "field": "${preparerDonnees.valid}",
+              "operator": "EQUALS",
+              "value": true
+            }
+          ],
+          "combinator": "AND"
+        },
+        "connections": {
+          "true": [
+            {
+              "taskName": "anthropicAiAsk"
+            }
+          ],
+          "false": [
+            {
+              "taskName": "reponseErreurValidation"
+            }
+          ]
+        }
+      },
+      {
+        "label": "Anthropic AI Ask - Qualification",
+        "name": "anthropicAiAsk",
+        "type": "anthropic/v1/ask",
+        "description": "Appel Anthropic Claude pour scorer le lead selon critères artisan",
+        "parameters": {
+          "model": "claude-sonnet-4-5-20250929",
+          "maxTokens": 300,
+          "messages": [
+            {
+              "role": "user",
+              "content": "${preparerDonnees.prompt_ai}"
+            }
+          ],
+          "temperature": 0.1
+        },
+        "connections": {
+          "true": [
+            {
+              "taskName": "parserResultatAi"
+            }
+          ]
+        }
+      },
+      {
+        "label": "Parser Résultat AI",
+        "name": "parserResultatAi",
+        "type": "script/v1/javascript",
+        "description": "Parse la réponse JSON de Claude et extrait le score + métadonnées",
+        "parameters": {
+          "script": "// ============================================================\n// STEP 3 - Parser réponse Anthropic et extraire score\n// ============================================================\n\nvar aiResponse = anthropicAiAsk.content || anthropicAiAsk.text || '';\nif (typeof aiResponse === 'object' && aiResponse[0]) {\n  aiResponse = aiResponse[0].text || JSON.stringify(aiResponse);\n}\n\nvar score = 0;\nvar niveau = 'COLD';\nvar raisons = [];\nvar actionRecommandee = 'Vérification manuelle requise';\n\ntry {\n  // Extraire le JSON de la réponse (même s'il y a du texte autour)\n  var jsonMatch = aiResponse.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    var parsed = JSON.parse(jsonMatch[0]);\n    score = parseInt(parsed.score) || 0;\n    niveau = parsed.niveau || (score > 70 ? 'HOT' : score > 40 ? 'WARM' : 'COLD');\n    raisons = parsed.raisons || [];\n    actionRecommandee = parsed.action_recommandee || actionRecommandee;\n  }\n} catch (e) {\n  console.error(JSON.stringify({ step: 'parser_ai', error: e.message, rawResponse: aiResponse.substring(0, 200) }));\n  // Fallback : scorer à 50 si AI parse échoue\n  score = 50;\n  niveau = 'WARM';\n  raisons = ['Erreur parsing AI - qualification manuelle nécessaire'];\n}\n\n// Clamp score 0-100\nif (score < 0) score = 0;\nif (score > 100) score = 100;\n\n// Log RGPD-compliant\nvar maskedEmail = preparerDonnees.email.replace(/(.{2}).*(@.*)/, '$1***$2');\nconsole.log(JSON.stringify({\n  step: 'ai_qualification',\n  status: 'success',\n  lead_id: preparerDonnees.lead_id,\n  email_masked: maskedEmail,\n  score: score,\n  niveau: niveau,\n  timestamp: new Date().toISOString()\n}));\n\nreturn {\n  score: score,\n  niveau: niveau,\n  raisons: raisons,\n  action_recommandee: actionRecommandee,\n  is_qualified: score > 70,\n  ai_raw_response: aiResponse.substring(0, 500)\n};"
+        },
+        "connections": {
+          "true": [
+            {
+              "taskName": "conditionScore"
+            }
+          ]
+        }
+      },
+      {
+        "label": "Score > 70 ?",
+        "name": "conditionScore",
+        "type": "flow-control/v1/condition",
+        "description": "Route le lead selon le score AI : >70 = qualifié (Notion), <=70 = basse qualif (Sheets+Slack)",
+        "parameters": {
+          "conditions": [
+            {
+              "field": "${parserResultatAi.score}",
+              "operator": "GREATER_THAN",
+              "value": 70
+            }
+          ],
+          "combinator": "AND"
+        },
+        "connections": {
+          "true": [
+            {
+              "taskName": "creerLeadNotion"
+            }
+          ],
+          "false": [
+            {
+              "taskName": "updateGoogleSheets"
+            },
+            {
+              "taskName": "slackNotifLowScore"
+            }
+          ]
+        }
+      },
+      {
+        "label": "Créer Lead Notion (Qualifié)",
+        "name": "creerLeadNotion",
+        "type": "notion/v1/createDatabaseItem",
+        "description": "Crée le lead qualifié dans la base Devis & Leads Notion",
+        "parameters": {
+          "databaseId": "${env.NOTION_DB_DEVIS_ARTISAN}",
+          "properties": {
+            "Client": {
+              "type": "title",
+              "title": [
+                {
+                  "text": {
+                    "content": "${preparerDonnees.nom} ${preparerDonnees.prenom}"
+                  }
+                }
+              ]
+            },
+            "Lead ID": {
+              "type": "rich_text",
+              "rich_text": [
+                {
+                  "text": {
+                    "content": "${preparerDonnees.lead_id}"
+                  }
+                }
+              ]
+            },
+            "Email": {
+              "type": "email",
+              "email": "${preparerDonnees.email}"
+            },
+            "Téléphone": {
+              "type": "phone_number",
+              "phone_number": "${preparerDonnees.telephone}"
+            },
+            "Adresse Chantier": {
+              "type": "rich_text",
+              "rich_text": [
+                {
+                  "text": {
+                    "content": "${preparerDonnees.adresse_chantier}"
+                  }
+                }
+              ]
+            },
+            "Code Postal": {
+              "type": "rich_text",
+              "rich_text": [
+                {
+                  "text": {
+                    "content": "${preparerDonnees.code_postal}"
+                  }
+                }
+              ]
+            },
+            "Type Travaux": {
+              "type": "select",
+              "select": {
+                "name": "${preparerDonnees.type_travaux}"
+              }
+            },
+            "Description": {
+              "type": "rich_text",
+              "rich_text": [
+                {
+                  "text": {
+                    "content": "${preparerDonnees.description}"
+                  }
+                }
+              ]
+            },
+            "Urgence": {
+              "type": "select",
+              "select": {
+                "name": "${preparerDonnees.urgence}"
+              }
+            },
+            "Score Qualif": {
+              "type": "number",
+              "number": "${parserResultatAi.score}"
+            },
+            "Statut": {
+              "type": "status",
+              "status": {
+                "name": "Nouveau"
+              }
+            },
+            "Source": {
+              "type": "select",
+              "select": {
+                "name": "${preparerDonnees.source}"
+              }
+            },
+            "Date Consentement RGPD": {
+              "type": "date",
+              "date": {
+                "start": "${preparerDonnees.date_consentement}"
+              }
+            },
+            "Date Suppression Prévue": {
+              "type": "date",
+              "date": {
+                "start": "${preparerDonnees.date_suppression_prevue}"
+              }
+            }
+          }
+        },
+        "connections": {
+          "true": [
+            {
+              "taskName": "logSuccesQualifie"
+            }
+          ]
+        }
+      },
+      {
+        "label": "Log Succès Lead Qualifié",
+        "name": "logSuccesQualifie",
+        "type": "script/v1/javascript",
+        "description": "Log final pour lead qualifié - email masqué RGPD",
+        "parameters": {
+          "script": "var maskedEmail = preparerDonnees.email.replace(/(.{2}).*(@.*)/, '$1***$2');\n\nreturn {\n  success: true,\n  status: 'QUALIFIED',\n  lead_id: preparerDonnees.lead_id,\n  score: parserResultatAi.score,\n  niveau: parserResultatAi.niveau,\n  action: 'NOTION_CREATED',\n  notion_page_id: creerLeadNotion.id || null,\n  email_masked: maskedEmail,\n  raisons: parserResultatAi.raisons,\n  action_recommandee: parserResultatAi.action_recommandee,\n  message: 'Lead qualifié (score ' + parserResultatAi.score + '/100) - ajouté dans Notion Devis & Leads',\n  timestamp: new Date().toISOString(),\n  workflow: 'artisan-ai-qualif-lead-v1.0'\n};"
+        },
+        "connections": {}
+      },
+      {
+        "label": "Google Sheets - Lead Low Score",
+        "name": "updateGoogleSheets",
+        "type": "google-sheets/v1/appendRow",
+        "description": "Ajoute le lead basse qualif dans Google Sheets pour suivi/nurturing",
+        "parameters": {
+          "spreadsheetId": "${env.GOOGLE_SHEET_LEADS_LOW_SCORE}",
+          "sheetName": "Leads Low Score",
+          "values": [
+            "${preparerDonnees.lead_id}",
+            "${preparerDonnees.nom} ${preparerDonnees.prenom}",
+            "${preparerDonnees.email}",
+            "${preparerDonnees.telephone}",
+            "${preparerDonnees.type_travaux}",
+            "${preparerDonnees.adresse_chantier}",
+            "${preparerDonnees.code_postal}",
+            "${preparerDonnees.urgence}",
+            "${preparerDonnees.source}",
+            "${parserResultatAi.score}",
+            "${parserResultatAi.niveau}",
+            "${parserResultatAi.action_recommandee}",
+            "${preparerDonnees.timestamp}"
+          ]
+        },
+        "connections": {
+          "true": [
+            {
+              "taskName": "logSuccesLowScore"
+            }
+          ]
+        }
+      },
+      {
+        "label": "Slack Notif - Lead Low Score",
+        "name": "slackNotifLowScore",
+        "type": "slack/v1/sendMessage",
+        "description": "Notification Slack pour leads non qualifiés - permet suivi humain",
+        "parameters": {
+          "channel": "${env.SLACK_CHANNEL_LEADS_LOW}",
+          "text": ":warning: *Lead basse qualif détecté*\n\n*Score :* ${parserResultatAi.score}/100 (${parserResultatAi.niveau})\n*Lead ID :* ${preparerDonnees.lead_id}\n*Client :* ${preparerDonnees.nom} ${preparerDonnees.prenom}\n*Type travaux :* ${preparerDonnees.type_travaux}\n*Urgence :* ${preparerDonnees.urgence}\n*Source :* ${preparerDonnees.source}\n\n*Action recommandée :* ${parserResultatAi.action_recommandee}\n*Raisons :* ${parserResultatAi.raisons}\n\n_Lead ajouté dans Google Sheets pour suivi._"
+        },
+        "connections": {
+          "true": [
+            {
+              "taskName": "logSuccesLowScore"
+            }
+          ]
+        }
+      },
+      {
+        "label": "Log Succès Low Score",
+        "name": "logSuccesLowScore",
+        "type": "script/v1/javascript",
+        "description": "Log final pour lead basse qualif - email masqué RGPD",
+        "parameters": {
+          "script": "var maskedEmail = preparerDonnees.email.replace(/(.{2}).*(@.*)/, '$1***$2');\n\nreturn {\n  success: true,\n  status: 'LOW_SCORE',\n  lead_id: preparerDonnees.lead_id,\n  score: parserResultatAi.score,\n  niveau: parserResultatAi.niveau,\n  actions: ['GOOGLE_SHEETS_UPDATED', 'SLACK_NOTIFIED'],\n  email_masked: maskedEmail,\n  action_recommandee: parserResultatAi.action_recommandee,\n  message: 'Lead non qualifié (score ' + parserResultatAi.score + '/100) - ajouté en Sheets + Slack notifié',\n  timestamp: new Date().toISOString(),\n  workflow: 'artisan-ai-qualif-lead-v1.0'\n};"
+        },
+        "connections": {}
+      },
+      {
+        "label": "Réponse Erreur Validation",
+        "name": "reponseErreurValidation",
+        "type": "script/v1/javascript",
+        "description": "Retourne erreur si données invalides",
+        "parameters": {
+          "script": "return {\n  success: false,\n  error: preparerDonnees.error,\n  message: preparerDonnees.message,\n  timestamp: new Date().toISOString(),\n  workflow: 'artisan-ai-qualif-lead-v1.0'\n};"
+        },
+        "connections": {}
+      }
+    ],
+    "triggers": [
+      {
+        "label": "Manual HTTP 200 Trigger",
+        "name": "manualHttp200Trigger",
+        "type": "webhook/v1/newWebhookTrigger",
+        "description": "Trigger HTTP POST manuel pour réception des leads à qualifier",
+        "parameters": {
+          "path": "/artisan/qualif-lead",
+          "method": "POST",
+          "contentType": "application/json",
+          "responseStatus": 200
+        },
+        "connections": {
+          "true": [
+            {
+              "taskName": "tryCatchGlobal"
+            }
+          ]
+        }
+      }
+    ],
+    "errorHandler": {
+      "label": "Try Catch Global",
+      "name": "tryCatchGlobal",
+      "type": "flow-control/v1/try-catch",
+      "parameters": {
+        "tryTasks": [
+          "preparerDonnees",
+          "verifierValidite",
+          "anthropicAiAsk",
+          "parserResultatAi",
+          "conditionScore",
+          "creerLeadNotion",
+          "logSuccesQualifie",
+          "updateGoogleSheets",
+          "slackNotifLowScore",
+          "logSuccesLowScore",
+          "reponseErreurValidation"
+        ],
+        "catchTask": "errorHandler"
+      },
+      "connections": {
+        "error": [
+          {
+            "taskName": "errorHandler"
+          }
+        ]
+      }
+    },
+    "errorTasks": [
+      {
+        "label": "Error Handler Global",
+        "name": "errorHandler",
+        "type": "script/v1/javascript",
+        "description": "Gestion centralisée des erreurs - aucune donnée personnelle dans les logs",
+        "parameters": {
+          "script": "var errorLog = {\n  success: false,\n  error: 'INTERNAL_ERROR',\n  message: 'Une erreur est survenue lors de la qualification du lead.',\n  timestamp: new Date().toISOString(),\n  workflow: 'artisan-ai-qualif-lead-v1.0',\n  severity: 'high'\n};\n\nconsole.error(JSON.stringify(errorLog));\nreturn errorLog;"
+        },
+        "connections": {}
+      }
+    ]
+  },
+  "label": "artisan-ai-qualif-lead-v1.0",
+  "description": "Auto-qualification leads artisans bâtiment via Anthropic AI. Score 0-100 basé sur complétude, type travaux, urgence, zone géo, budget, source. Score >70 = Notion Devis & Leads. Score <=70 = Google Sheets + Slack notification. RGPD-compliant.",
+  "version": 1,
+  "tags": [
+    "artisan",
+    "ai",
+    "qualification",
+    "lead-scoring",
+    "anthropic",
+    "bytechef"
+  ],
+  "settings": {
+    "timezone": "Europe/Paris",
+    "errorHandling": "try-catch",
+    "maxRetries": 1,
+    "retryDelay": 3000
+  },
+  "connections": {
+    "anthropic": {
+      "connectionId": "anthropic-credentials",
+      "type": "anthropic/v1"
+    },
+    "notion": {
+      "connectionId": "notion-credentials",
+      "type": "notion/v1"
+    },
+    "googleSheets": {
+      "connectionId": "google-sheets-credentials",
+      "type": "google-sheets/v1"
+    },
+    "slack": {
+      "connectionId": "slack-credentials",
+      "type": "slack/v1"
+    }
+  },
+  "environment": {
+    "NOTION_DB_DEVIS_ARTISAN": "ID base Notion Devis & Leads",
+    "GOOGLE_SHEET_LEADS_LOW_SCORE": "ID Google Sheet pour leads basse qualif",
+    "SLACK_CHANNEL_LEADS_LOW": "Canal Slack pour notifs leads non qualifiés",
+    "ARTISAN_NOM_ENTREPRISE": "Nom de l'entreprise artisan"
+  },
+  "_documentation": {
+    "description": "Workflow de qualification automatique des leads artisans via IA",
+    "version": "1.0.0",
+    "author": "Vazbolota Consulting",
+    "platform": "ByteChef",
+    "flow": [
+      "1. manualHttp200Trigger: Réception POST du lead brut",
+      "2. preparerDonnees: Sanitize + génération Lead ID + construction prompt AI",
+      "3. verifierValidite: Check données valides (email obligatoire)",
+      "4. anthropicAiAsk: Claude score le lead 0-100 (6 critères artisan)",
+      "5. parserResultatAi: Parse JSON AI → score, niveau, raisons",
+      "6. conditionScore: IF score > 70",
+      "7a. TRUE → creerLeadNotion: Création dans DB Devis & Leads",
+      "7b. FALSE → updateGoogleSheets + slackNotifLowScore (parallèle)"
+    ],
+    "scoringCriteria": {
+      "completude": "0-25 pts (nom, tel, adresse, description)",
+      "typeTravaux": "0-20 pts (pertinence travaux courants)",
+      "urgence": "0-20 pts (très urgente=20, urgente=15, normale=5)",
+      "zoneGeo": "0-10 pts (code postal renseigné)",
+      "budget": "0-10 pts (budget mentionné)",
+      "source": "0-15 pts (bouche à oreille=15, site=10, autre=5)"
+    },
+    "routing": {
+      "HOT (>70)": "Notion Devis & Leads → traitement prioritaire",
+      "WARM/COLD (<=70)": "Google Sheets + Slack notif → nurturing/suivi manuel"
+    },
+    "testPayload": {
+      "happy_path_high_score": {
+        "nom": "DUPONT",
+        "prenom": "Marie",
+        "email": "marie.dupont@example.com",
+        "telephone": "06 12 34 56 78",
+        "adresse_chantier": "12 rue de la Paix, Paris",
+        "code_postal": "75001",
+        "type_travaux": "plomberie",
+        "description": "Fuite importante sous évier cuisine, dégât des eaux en cours. Besoin intervention rapide.",
+        "urgence": "tres_urgente",
+        "budget": "500-1000€",
+        "disponibilite": "Dès que possible",
+        "source": "bouche_a_oreille",
+        "consentement_rgpd": true
+      },
+      "low_score": {
+        "nom": "TEST",
+        "prenom": "",
+        "email": "test@test.com",
+        "telephone": "",
+        "adresse_chantier": "",
+        "code_postal": "",
+        "type_travaux": "autre",
+        "description": "",
+        "urgence": "normale",
+        "source": "autre",
+        "consentement_rgpd": true
+      },
+      "invalid": {
+        "nom": "TEST",
+        "email": "invalide"
+      }
+    },
+    "rgpd": {
+      "baseLegale": "Intérêt légitime (Art. 6.1.f RGPD) - qualification commerciale",
+      "donneesT}raitees": ["Nom", "Email", "Téléphone", "Adresse", "Description travaux"],
+      "destinataires": ["Anthropic API (scoring)", "Notion (leads qualifiés)", "Google Sheets (leads non qualifiés)", "Slack (notification)"],
+      "conservation": "3 ans / Logs: 1 an",
+      "securite": ["Emails masqués dans logs", "Données sanitizées", "HTTPS", "OAuth2"]
+    }
+  }
+

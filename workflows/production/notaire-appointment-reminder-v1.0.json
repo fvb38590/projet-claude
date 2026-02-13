@@ -1,0 +1,448 @@
+{
+  "name": "notaire-appointment-reminder-v1.0",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "start-node",
+      "name": "Start",
+      "type": "n8n-nodes-base.start",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hour": 9
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Trigger Quotidien 9h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 500],
+      "notes": "Déclenche chaque jour à 9h pour vérifier les RDV du lendemain"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Initialisation du contexte workflow - Logging standard\nconst now = new Date();\nconst tomorrow = new Date(now);\ntomorrow.setDate(tomorrow.getDate() + 1);\n\n// Format dates pour Google Calendar API\nconst timeMin = new Date(tomorrow.setHours(0, 0, 0, 0)).toISOString();\nconst timeMax = new Date(tomorrow.setHours(23, 59, 59, 999)).toISOString();\n\nconst workflow_context = {\n  workflowName: $workflow.name,\n  executionId: $execution.id,\n  startTime: now.toISOString(),\n  trigger: \"schedule\",\n  targetDate: tomorrow.toISOString().split('T')[0],\n  status: \"started\"\n};\n\nconsole.log(JSON.stringify(workflow_context));\n\nreturn {\n  json: {\n    timeMin,\n    timeMax,\n    workflow_context\n  }\n};"
+      },
+      "id": "init-context",
+      "name": "Init Context & Dates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 500],
+      "notes": "Calcule J+1 et initialise le logging"
+    },
+    {
+      "parameters": {
+        "errorWorkflow": "={{$workflow.id}}"
+      },
+      "id": "try-catch-wrapper",
+      "name": "Try/Catch",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [240, 720],
+      "notes": "Capture les erreurs du workflow"
+    },
+    {
+      "parameters": {
+        "resource": "event",
+        "calendar": {
+          "__rl": true,
+          "value": "primary",
+          "mode": "list"
+        },
+        "returnAll": true,
+        "options": {
+          "timeMin": "={{ $json.timeMin }}",
+          "timeMax": "={{ $json.timeMax }}",
+          "singleEvents": true,
+          "orderBy": "startTime"
+        }
+      },
+      "id": "google-calendar",
+      "name": "Google Calendar - RDV J+1",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.1,
+      "position": [680, 500],
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "GOOGLE_CALENDAR_CREDENTIALS_ID",
+          "name": "Google Calendar OAuth2"
+        }
+      },
+      "notes": "Récupère tous les événements du lendemain"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "condition-has-attendees",
+              "leftValue": "={{ $json.attendees }}",
+              "rightValue": "",
+              "operator": {
+                "type": "array",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "filter-rdv-clients",
+      "name": "Filtrer RDV avec Clients",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2,
+      "position": [900, 500],
+      "notes": "Ne garde que les RDV ayant des participants (clients)"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extraction et validation des détails RDV - Conformité RGPD\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const event = item.json;\n  \n  // Extraire les participants (clients)\n  const attendees = event.attendees || [];\n  \n  for (const attendee of attendees) {\n    // Ignorer l'organisateur (notaire)\n    if (attendee.organizer === true) continue;\n    \n    // Validation email requis pour RGPD\n    if (!attendee.email) {\n      console.log(`RGPD_WARNING: Participant sans email ignoré pour event ${event.id}`);\n      continue;\n    }\n    \n    // Extraire heure du RDV\n    const startDateTime = new Date(event.start.dateTime || event.start.date);\n    const heureRdv = startDateTime.toLocaleTimeString('fr-FR', {\n      hour: '2-digit',\n      minute: '2-digit',\n      timeZone: 'Europe/Paris'\n    });\n    const dateRdv = startDateTime.toLocaleDateString('fr-FR', {\n      weekday: 'long',\n      day: 'numeric',\n      month: 'long',\n      year: 'numeric',\n      timeZone: 'Europe/Paris'\n    });\n    \n    // Générer ID traçable RGPD\n    const rgpdTraceId = `RAPPEL-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;\n    \n    results.push({\n      json: {\n        // Données RDV\n        eventId: event.id,\n        titre: event.summary || 'Rendez-vous',\n        description: event.description || '',\n        lieu: event.location || 'À confirmer',\n        dateRdv,\n        heureRdv,\n        dateTimeISO: startDateTime.toISOString(),\n        \n        // Données client (minimisées - RGPD)\n        clientEmail: attendee.email,\n        clientNom: attendee.displayName || attendee.email.split('@')[0],\n        \n        // Traçabilité RGPD\n        rgpdTraceId,\n        rgpdFinalite: 'Rappel de rendez-vous - Base légale: exécution contrat',\n        rgpdTimestamp: new Date().toISOString(),\n        rgpdConservation: '1 an (logs techniques)',\n        \n        // Logging\n        step: 'extraction_details',\n        status: 'success'\n      }\n    });\n  }\n}\n\nif (results.length === 0) {\n  return [{\n    json: {\n      noResults: true,\n      message: 'Aucun RDV avec client trouvé pour demain',\n      timestamp: new Date().toISOString()\n    }\n  }];\n}\n\nconsole.log(`Extraction OK: ${results.length} rappels à envoyer`);\nreturn results;"
+      },
+      "id": "extract-rdv-details",
+      "name": "Extraire Détails RDV",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 500],
+      "notes": "Parse les détails et génère ID traçable RGPD"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-has-results",
+              "leftValue": "={{ $json.noResults }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "notTrue"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "check-results",
+      "name": "RDV à rappeler?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1340, 500],
+      "notes": "Vérifie s'il y a des RDV à rappeler"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.clientEmail }}",
+        "subject": "Rappel : Votre rendez-vous du {{ $json.dateRdv }}",
+        "emailType": "html",
+        "message": "<!DOCTYPE html>\n<html>\n<head>\n  <meta charset=\"UTF-8\">\n  <style>\n    body { font-family: Georgia, serif; color: #333; line-height: 1.6; }\n    .header { background: #1a365d; color: white; padding: 20px; text-align: center; }\n    .content { padding: 30px; background: #f8f9fa; }\n    .rdv-box { background: white; border-left: 4px solid #1a365d; padding: 20px; margin: 20px 0; }\n    .footer { font-size: 12px; color: #666; padding: 20px; border-top: 1px solid #ddd; }\n    .rgpd { font-size: 10px; color: #999; margin-top: 20px; }\n  </style>\n</head>\n<body>\n  <div class=\"header\">\n    <h1>Rappel de Rendez-vous</h1>\n  </div>\n  <div class=\"content\">\n    <p>Bonjour {{ $json.clientNom }},</p>\n    \n    <p>Nous vous rappelons votre rendez-vous prévu <strong>demain</strong> :</p>\n    \n    <div class=\"rdv-box\">\n      <p><strong>{{ $json.titre }}</strong></p>\n      <p>Date : {{ $json.dateRdv }}</p>\n      <p>Heure : {{ $json.heureRdv }}</p>\n      <p>Lieu : {{ $json.lieu }}</p>\n    </div>\n    \n    <p>Merci de vous munir des documents nécessaires et de vous présenter quelques minutes avant l'heure prévue.</p>\n    \n    <p>En cas d'empêchement, merci de nous prévenir dans les plus brefs délais.</p>\n    \n    <p>Cordialement,<br>\n    L'étude notariale</p>\n  </div>\n  <div class=\"footer\">\n    <p>Ce message est envoyé automatiquement. Merci de ne pas y répondre directement.</p>\n    <p class=\"rgpd\">\n      <strong>Informations RGPD</strong> : Ce rappel est envoyé dans le cadre de l'exécution de notre relation contractuelle. \n      Vos données (nom, email) sont utilisées uniquement pour ce rappel et conservées conformément à nos obligations légales. \n      Pour exercer vos droits (accès, rectification, suppression), contactez notre étude.<br>\n      ID de traçabilité : {{ $json.rgpdTraceId }}\n    </p>\n  </div>\n</body>\n</html>",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "send-reminder-email",
+      "name": "Envoyer Email Rappel",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [1560, 400],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "GMAIL_CREDENTIALS_ID",
+          "name": "Gmail OAuth2"
+        }
+      },
+      "notes": "Email de rappel avec mentions RGPD obligatoires",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Logging succès envoi email\nconst item = $input.item.json;\n\nconst log = {\n  step: 'email_sent',\n  status: 'success',\n  rgpdTraceId: item.rgpdTraceId,\n  clientEmail: item.clientEmail.replace(/(.{2}).*(@.*)/, '$1***$2'), // Email masqué pour logs\n  eventId: item.eventId,\n  dateRdv: item.dateRdv,\n  timestamp: new Date().toISOString(),\n  message: 'Rappel envoyé avec succès'\n};\n\nconsole.log(JSON.stringify(log));\n\nreturn {\n  json: log\n};"
+      },
+      "id": "log-success",
+      "name": "Log Succès",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1780, 400],
+      "notes": "Log structuré JSON - email masqué RGPD"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Logging aucun RDV\nconst log = {\n  step: 'no_appointments',\n  status: 'completed',\n  message: 'Aucun rendez-vous client trouvé pour demain',\n  timestamp: new Date().toISOString(),\n  workflowName: $workflow.name,\n  executionId: $execution.id\n};\n\nconsole.log(JSON.stringify(log));\n\nreturn {\n  json: log\n};"
+      },
+      "id": "log-no-results",
+      "name": "Log Aucun RDV",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 600],
+      "notes": "Log quand pas de RDV à rappeler"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Gestion erreur - Logging structuré\nconst error = $input.item.json;\n\nconst errorLog = {\n  step: 'error_handler',\n  status: 'error',\n  errorCode: error.error?.name || 'UNKNOWN_ERROR',\n  errorMessage: error.error?.message || 'Erreur inconnue',\n  errorNode: error.node?.name || 'Unknown',\n  timestamp: new Date().toISOString(),\n  workflowName: $workflow.name,\n  executionId: $execution.id,\n  severity: 'high'\n};\n\nconsole.error(JSON.stringify(errorLog));\n\nreturn {\n  json: errorLog\n};"
+      },
+      "id": "error-handler",
+      "name": "Error Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 720],
+      "notes": "Formate l'erreur pour logging/alerting"
+    },
+    {
+      "parameters": {
+        "channel": "#errors",
+        "text": ":warning: *Erreur Workflow Rappel RDV Notaire*\n\n*Erreur:* {{ $json.errorCode }}\n*Message:* {{ $json.errorMessage }}\n*Node:* {{ $json.errorNode }}\n*Execution:* {{ $json.executionId }}\n*Timestamp:* {{ $json.timestamp }}",
+        "otherOptions": {}
+      },
+      "id": "slack-alert",
+      "name": "Slack Alert #errors",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [680, 720],
+      "credentials": {
+        "slackApi": {
+          "id": "SLACK_CREDENTIALS_ID",
+          "name": "Slack API"
+        }
+      },
+      "notes": "Alerte Slack en cas d'erreur (optionnel)"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Logging échec envoi email\nconst item = $input.item.json;\n\nconst log = {\n  step: 'email_failed',\n  status: 'error',\n  rgpdTraceId: item.rgpdTraceId,\n  clientEmail: item.clientEmail.replace(/(.{2}).*(@.*)/, '$1***$2'),\n  eventId: item.eventId,\n  errorMessage: 'Échec envoi email - voir logs n8n',\n  timestamp: new Date().toISOString()\n};\n\nconsole.error(JSON.stringify(log));\n\nreturn {\n  json: log\n};"
+      },
+      "id": "log-email-error",
+      "name": "Log Erreur Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1780, 500],
+      "notes": "Log échec envoi email individuel"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Récapitulatif final du workflow\nconst allItems = $input.all();\n\nconst summary = {\n  step: 'workflow_completed',\n  status: 'success',\n  totalProcessed: allItems.length,\n  successCount: allItems.filter(i => i.json.status === 'success').length,\n  errorCount: allItems.filter(i => i.json.status === 'error').length,\n  timestamp: new Date().toISOString(),\n  workflowName: $workflow.name,\n  executionId: $execution.id\n};\n\nconsole.log(JSON.stringify(summary));\n\nreturn {\n  json: summary\n};"
+      },
+      "id": "summary",
+      "name": "Récapitulatif",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2000, 450],
+      "notes": "Résumé final de l'exécution"
+    }
+  ],
+  "connections": {
+    "Trigger Quotidien 9h": {
+      "main": [
+        [
+          {
+            "node": "Init Context & Dates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Init Context & Dates": {
+      "main": [
+        [
+          {
+            "node": "Google Calendar - RDV J+1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Calendar - RDV J+1": {
+      "main": [
+        [
+          {
+            "node": "Filtrer RDV avec Clients",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filtrer RDV avec Clients": {
+      "main": [
+        [
+          {
+            "node": "Extraire Détails RDV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraire Détails RDV": {
+      "main": [
+        [
+          {
+            "node": "RDV à rappeler?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RDV à rappeler?": {
+      "main": [
+        [
+          {
+            "node": "Envoyer Email Rappel",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Aucun RDV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Envoyer Email Rappel": {
+      "main": [
+        [
+          {
+            "node": "Log Succès",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Erreur Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Succès": {
+      "main": [
+        [
+          {
+            "node": "Récapitulatif",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Erreur Email": {
+      "main": [
+        [
+          {
+            "node": "Récapitulatif",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Try/Catch": {
+      "main": [
+        [
+          {
+            "node": "Error Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Error Handler": {
+      "main": [
+        [
+          {
+            "node": "Slack Alert #errors",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "={{$workflow.id}}"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "notaire"
+    },
+    {
+      "name": "production"
+    },
+    {
+      "name": "rappel-rdv"
+    }
+  ],
+  "triggerCount": 1,
+  "versionId": "1.0.0",
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "instanceId": "vazbolota-consulting"
+  },
+  "_documentation": {
+    "description": "Workflow de rappel automatique de rendez-vous pour études notariales",
+    "version": "1.0.0",
+    "author": "Vazbolota Consulting",
+    "createdAt": "2026-01-19",
+    "rgpd": {
+      "finalite": "Rappel de rendez-vous clients - amélioration du service",
+      "baseLegale": "Exécution du contrat (Art. 6.1.b RGPD)",
+      "donneesTraitees": ["Nom/Prénom", "Email", "Date/heure RDV", "Lieu RDV"],
+      "categoriesPersonnes": ["Clients de l'étude notariale"],
+      "destinataires": ["Google Calendar (lecture)", "Gmail (envoi)"],
+      "conservation": "Logs: 1 an / Données RDV: durée du contrat",
+      "securite": ["HTTPS", "OAuth2", "Credentials en variables d'environnement", "Logs anonymisés"]
+    },
+    "credentials_required": [
+      {
+        "type": "googleCalendarOAuth2Api",
+        "description": "Accès lecture au calendrier Google de l'étude"
+      },
+      {
+        "type": "gmailOAuth2",
+        "description": "Envoi d'emails via compte Gmail de l'étude"
+      },
+      {
+        "type": "slackApi",
+        "description": "Alertes erreurs (optionnel)",
+        "optional": true
+      }
+    ],
+    "setup_instructions": [
+      "1. Configurer les credentials Google Calendar et Gmail OAuth2",
+      "2. Optionnel: Configurer Slack pour les alertes erreurs",
+      "3. Remplacer les IDs de credentials (GOOGLE_CALENDAR_CREDENTIALS_ID, GMAIL_CREDENTIALS_ID, SLACK_CREDENTIALS_ID)",
+      "4. Ajuster l'heure du trigger si nécessaire (défaut: 9h)",
+      "5. Personnaliser le template email si besoin",
+      "6. Activer le workflow"
+    ]
+  }
+}

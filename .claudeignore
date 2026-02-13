@@ -1,0 +1,35 @@
+# Brouillons et tests
+brouillons_tests/
+
+# Variables d'environnement
+.env
+.env.*
+
+# Logs
+*.log
+logs/
+
+# Fichiers temporaires
+*.tmp
+*.temp
+*.bak
+*.swp
+*~
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Node
+node_modules/
+npm-debug.log*
+
+# IDE
+.vscode/
+.idea/
+
+# Donnees de scraping et rapports clients (Protection quotas)
+blueprints/**/*.csv
+public/audits/*.html
+leads_*.csv

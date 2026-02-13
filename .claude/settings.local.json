@@ -1,0 +1,22 @@
+{
+  "env": {},
+  "permissions": {
+    "allow": [
+      "Bash(\"C:\\\\Program Files\\\\GitHub CLI\\\\gh.exe\" api \"repos/bytechefhq/bytechef/contents/server/libs/modules/components/ai\" --jq \".[].name\")",
+      "Bash(\"C:\\\\Program Files\\\\GitHub CLI\\\\gh.exe\" api \"repos/bytechefhq/bytechef/contents/server/libs/modules/components/ai/llm\" --jq \".[].name\")",
+      "Bash(\"C:\\\\Program Files\\\\GitHub CLI\\\\gh.exe\" api \"repos/bytechefhq/bytechef/contents/server/libs/modules/components/ai/llm/anthropic/src/test/resources/definition/anthropic_v1.json\")",
+      "Bash(python -c \"import json, base64; f=open\\(''temp_anthropic.json'',''r''\\); d=json.load\\(f\\); content=base64.b64decode\\(d[''content'']\\).decode\\(''utf-8''\\); w=json.loads\\(content\\); actions=w.get\\(''actions'',[]\\); print\\(''Name:'', w.get\\(''name'',''''\\)\\); print\\(''ANTHROPIC ACTIONS:''\\); [print\\(f''  name={a[\"\"name\"\"]}''\\) for a in actions]\")",
+      "Bash(\"C:\\\\Program Files\\\\GitHub CLI\\\\gh.exe\" api \"repos/bytechefhq/bytechef/contents/server/libs/modules/task-dispatchers/each/src/test/resources/definition/each_v1.json\")",
+      "Bash(python -c:*)",
+      "Bash(\"C:\\\\Program Files\\\\GitHub CLI\\\\gh.exe\" api \"repos/bytechefhq/bytechef/contents/server/libs/modules/task-dispatchers/loop/src/test/resources/definition/loop_v1.json\")"
+    ]
+  },
+  "enabledPlugins": {},
+  "allowedTools": {
+    "bash": [
+      "ls",
+      "cd",
+      "pwd"
+    ]
+  }
+}

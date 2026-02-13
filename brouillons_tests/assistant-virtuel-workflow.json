@@ -1,0 +1,180 @@
+{
+  "name": "Assistant Virtuel IA - Gestion Tâches",
+  "nodes": [
+    {
+      "id": "1",
+      "name": "Gmail Trigger",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "label": "Inbox"
+      }
+    },
+    {
+      "id": "2",
+      "name": "OpenAI Analyse",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [460, 300],
+      "parameters": {
+        "resource": "chat",
+        "operation": "create",
+        "model": "gpt-4o",
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "Tu es un assistant virtuel. Résume l'email, extrait la tâche, priorité (haute/moyenne/basse) et deadline. Retourne JSON: {summary, task, priority, deadline}"
+            },
+            {
+              "role": "user",
+              "content": "={{ $json.textAsHtml }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "3",
+      "name": "IF Priorité Haute",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [680, 300],
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.priority }}",
+              "operation": "contains",
+              "value2": "haute"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "4",
+      "name": "Todoist Créer Tâche",
+      "type": "n8n-nodes-base.todoist",
+      "typeVersion": 1,
+      "position": [900, 200],
+      "parameters": {
+        "operation": "create",
+        "projectId": "VOTRE_PROJECT_ID",
+        "content": "={{ $json.task }}",
+        "description": "={{ $json.summary }}",
+        "priority": "={{ $json.priority === 'haute' ? 1 : 2 }}"
+      }
+    },
+    {
+      "id": "5",
+      "name": "Slack Notif",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2,
+      "position": [900, 460],
+      "parameters": {
+        "resource": "channel",
+        "operation": "postMessage",
+        "channelId": "C_VOTRE_CHANNEL",
+        "text": "={{`Tâche créée: ${$json.task}\nPriorité: ${$json.priority}\nDeadline: ${$json.deadline}\n\nRésumé: ${$json.summary}`}}"
+      }
+    },
+    {
+      "id": "6",
+      "name": "Tâche Normale",
+      "type": "n8n-nodes-base.todoist",
+      "typeVersion": 1,
+      "position": [900, 620],
+      "parameters": {
+        "operation": "create",
+        "projectId": "VOTRE_PROJECT_ID",
+        "content": "={{ $json.task }}",
+        "description": "={{ $json.summary }}",
+        "priority": "={{ $json.priority === 'haute' ? 1 : ($json.priority === 'moyenne' ? 2 : 3) }}"
+      }
+    }
+  ],
+  "connections": {
+    "Gmail Trigger": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Analyse",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Analyse": {
+      "main": [
+        [
+          {
+            "node": "IF Priorité Haute",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Priorité Haute": {
+      "main": [
+        [
+          {
+            "node": "Todoist Créer Tâche",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Tâche Normale",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Todoist Créer Tâche": {
+      "main": [
+        [
+          {
+            "node": "Slack Notif",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tâche Normale": {
+      "main": [
+        [
+          {
+            "node": "Slack Notif",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "pinData": {},
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2026-01-21T10:16:00.000Z",
+  "versionId": 1
+}

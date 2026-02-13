@@ -1,0 +1,5 @@
+{
+  "claudeCode.maxContextTokens": 180000,
+  "claudeCode.compactContext": true,
+  "claudeCode.model": "claude-3.5-sonnet"
+}

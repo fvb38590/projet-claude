@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>Audit Automatisation - Vazbolota</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="p-10 bg-gray-50">
+    <div class="max-w-3xl mx-auto bg-white p-8 rounded-xl shadow-md">
+        <h1 class="text-2xl font-bold text-blue-600 mb-4">Rapport d'Audit Technique</h1>
+        <p class="mb-6">Cible : <span class="font-mono text-gray-700">{{URL_CLIENT}}</span></p>
+        
+        <div class="space-y-4">
+            <div class="p-4 border-l-4 border-red-500 bg-red-50">
+                <h2 class="font-bold">Diagnostic SPF</h2>
+                <p>Etat : {{STATUT_SPF}} - Risque de delivrabilite eleve.</p>
+            </div>
+            <div class="p-4 border-l-4 border-green-500 bg-green-50">
+                <h2 class="font-bold">Potentiel d'Automatisation</h2>
+                <p>Gain estime : 10h / semaine via le Pack {{NOM_PACK}}.</p>
+            </div>
+        </div>
+        
+        <div class="mt-8">
+            <a href="{{LIEN_GUMROAD}}" class="bg-blue-600 text-white px-6 py-2 rounded">Activer la solution maintenant</a>
+        </div>
+    </div>
+</body>
+</html>
