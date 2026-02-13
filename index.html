@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vazbolota Consulting | Expert Automatisation</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+</head>
+<body class="bg-gray-50 text-gray-900 font-sans">
+
+    <header class="bg-slate-900 text-white py-20 px-6 text-center">
+        <h1 class="text-4xl md:text-6xl font-bold mb-4">Automatisez. Scalez. Respirez.</h1>
+        <p class="text-xl text-gray-400 mb-8 max-w-2xl mx-auto">Je transforme vos taches manuelles repetitives en systemes autonomes qui travaillent pour vous 24h/24.</p>
+        <a href="#offres" class="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-lg font-bold transition">Voir les solutions</a>
+    </header>
+
+    <section id="offres" class="py-20 px-6 max-w-6xl mx-auto">
+        <h2 class="text-3xl font-bold text-center mb-12">Mes Packs d'Automatisation</h2>
+        
+        <div class="grid md:grid-cols-3 gap-8">
+            <div class="bg-white p-8 rounded-xl shadow-lg border border-gray-100 flex flex-col">
+                <div class="text-blue-600 text-3xl mb-4"><i class="fas fa-building"></i></div>
+                <h3 class="text-xl font-bold mb-2">Pack Immo-Furtif</h3>
+                <p class="text-gray-600 mb-6 flex-grow">Scraping d'annonces, audit SPF automatique et generation de leads qualifies pour agences.</p>
+                <div class="text-2xl font-bold mb-6">450E <span class="text-sm text-gray-400">/ setup</span></div>
+                <button class="w-full bg-slate-900 text-white py-2 rounded font-semibold hover:bg-slate-800 transition">Commander</button>
+            </div>
+
+            <div class="bg-white p-8 rounded-xl shadow-lg border border-blue-200 transform scale-105 flex flex-col">
+                <div class="text-blue-600 text-3xl mb-4"><i class="fas fa-tools"></i></div>
+                <h3 class="text-xl font-bold mb-2">Artisan-Connect</h3>
+                <p class="text-gray-600 mb-6 flex-grow">Secretariat IA : gestion automatique des RDV, SMS de confirmation et facturation.</p>
+                <div class="text-2xl font-bold mb-6">Sur Devis <span class="text-sm text-gray-400">/ pack 6 flux</span></div>
+                <button class="w-full bg-blue-600 text-white py-2 rounded font-semibold hover:bg-blue-700 transition">Prendre RDV</button>
+            </div>
+
+            <div class="bg-white p-8 rounded-xl shadow-lg border border-gray-100 flex flex-col">
+                <div class="text-blue-600 text-3xl mb-4"><i class="fas fa-shopping-cart"></i></div>
+                <h3 class="text-xl font-bold mb-2">Ecom-Performance</h3>
+                <p class="text-gray-600 mb-6 flex-grow">Optimisation SEO Shopify, synchronisation de stocks et recuperation de paniers perdus.</p>
+                <div class="text-2xl font-bold mb-6">600E <span class="text-sm text-gray-400">/ audit</span></div>
+                <button class="w-full bg-slate-900 text-white py-2 rounded font-semibold hover:bg-slate-800 transition">Optimiser mon shop</button>
+            </div>
+        </div>
+    </section>
+
+    <footer class="bg-gray-100 py-10 text-center border-t">
+        <p class="text-gray-500">© 2026 Vazbolota Consulting - automat@vazbolotaconsulting.fr</p>
+    </footer>
+
+    <script>
+    async function notifyInterest(packName) {
+        const email = prompt("Laissez-nous votre email pour recevoir le detail du " + packName);
+        if (email) {
+            const webhookUrl = 'https://n8n.vazbolotaconsulting.fr/webhook/interest'; 
+            await fetch(webhookUrl, {
+                method: 'POST',
+                body: JSON.stringify({ email: email, pack: packName }),
+                headers: { 'Content-Type': 'application/json' }
+            });
+            alert("Merci ! On vous recontacte avec l'audit gratuit.");
+        }
+    }
+    document.querySelectorAll('button').forEach(btn => {
+        btn.onclick = () => notifyInterest(btn.parentElement.querySelector('h3').innerText);
+    });
+    </script>
+
+</body>
+</html>
