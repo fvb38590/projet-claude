@@ -1,0 +1,4 @@
+.env
+brain/
+__pycache__/
+*.pyc

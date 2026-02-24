@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mirror AI - Capture Rapide</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f0f0f; color: #fff; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+        .container { width: 100%; max-width: 500px; padding: 20px; }
+        h1 { text-align: center; margin-bottom: 30px; font-size: 2rem; background: linear-gradient(135deg, #667eea, #764ba2); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        textarea { width: 100%; height: 150px; padding: 15px; border: 2px solid #333; border-radius: 12px; background: #1a1a1a; color: #fff; font-size: 16px; resize: none; transition: border-color 0.3s; }
+        textarea:focus { outline: none; border-color: #667eea; }
+        button { width: 100%; padding: 15px; margin-top: 15px; background: linear-gradient(135deg, #667eea, #764ba2); border: none; border-radius: 12px; color: #fff; font-size: 16px; font-weight: 600; cursor: pointer; transition: transform 0.2s, opacity 0.2s; }
+        button:hover { transform: translateY(-2px); }
+        button:disabled { opacity: 0.6; cursor: not-allowed; }
+        .status { margin-top: 20px; padding: 15px; border-radius: 12px; text-align: center; display: none; }
+        .status.success { background: #1a3d1a; color: #4ade80; display: block; }
+        .status.error { background: #3d1a1a; color: #f87171; display: block; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Mirror AI ⚡</h1>
+        <textarea id="noteInput" placeholder="Ta note ici... (Capture rapide)"></textarea>
+        <button id="sendBtn" onclick="sendNote()">Envoyer</button>
+        <div id="status" class="status"></div>
+    </div>
+    <script>
+        const WEBHOOK_URL = 'http://localhost:5678/webhook-test/605762ee-7836-4706-b16a-877fae13f108';
+        async function sendNote() {
+            const input = document.getElementById('noteInput');
+            const btn = document.getElementById('sendBtn');
+            const status = document.getElementById('status');
+            const content = input.value.trim();
+            if (!content) return;
+            btn.disabled = true;
+            btn.textContent = 'Envoi...';
+            status.className = 'status';
+            try {
+                const response = await fetch(WEBHOOK_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ content })
+                });
+                if (response.ok) {
+                    status.textContent = '✓ Note enregistrée !';
+                    status.className = 'status success';
+                    input.value = '';
+                } else {
+                    throw new Error('Erreur webhook');
+                }
+            } catch (e) {
+                status.textContent = '✗ Erreur: ' + e.message;
+                status.className = 'status error';
+            }
+            btn.disabled = false;
+            btn.textContent = 'Envoyer';
+        }
+    </script>
+</body>
+</html>
