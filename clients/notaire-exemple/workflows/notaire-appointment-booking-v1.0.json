@@ -1,0 +1,342 @@
+{
+  "name": "notaire-appointment-booking-v1.0",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "notaire-rdv-booking",
+        "options": {
+          "responseMode": "responseNode"
+        }
+      },
+      "id": "webhook-booking",
+      "name": "Webhook Demande RDV",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "notaire-rdv-booking"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validation et préparation de la demande de RDV\nconst input = $input.first().json;\n\n// Créneaux autorisés (format HH:MM)\nconst CRENEAUX_AUTORISES = [\n  '09:00', '09:30', '10:00', '10:30', '11:00', '11:30',\n  '14:00', '14:30', '15:00', '15:30', '16:00', '16:30', '17:00'\n];\n\n// Durée RDV en minutes\nconst DUREE_RDV = 30;\n\n// 1. Vérification consentement RGPD\nif (!input.consentement_rgpd || input.consentement_rgpd !== true) {\n  return [{\n    json: {\n      valid: false,\n      error_code: 'RGPD_NO_CONSENT',\n      error_message: 'Consentement RGPD requis pour la prise de rendez-vous',\n      timestamp: new Date().toISOString()\n    }\n  }];\n}\n\n// 2. Validation email\nconst emailRegex = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;\nif (!input.email || !emailRegex.test(input.email)) {\n  return [{\n    json: {\n      valid: false,\n      error_code: 'VALIDATION_EMAIL_INVALID',\n      error_message: 'Format email invalide',\n      timestamp: new Date().toISOString()\n    }\n  }];\n}\n\n// 3. Validation champs obligatoires\nconst requiredFields = ['nom', 'prenom', 'email', 'date_souhaitee', 'creneau_souhaite', 'type_acte'];\nfor (const field of requiredFields) {\n  if (!input[field] || input[field].toString().trim() === '') {\n    return [{\n      json: {\n        valid: false,\n        error_code: 'VALIDATION_MISSING_FIELD',\n        error_message: `Champ obligatoire manquant: ${field}`,\n        timestamp: new Date().toISOString()\n      }\n    }];\n  }\n}\n\n// 4. Validation du créneau\nconst creneauSouhaite = input.creneau_souhaite.trim();\nif (!CRENEAUX_AUTORISES.includes(creneauSouhaite)) {\n  return [{\n    json: {\n      valid: false,\n      error_code: 'VALIDATION_CRENEAU_INVALID',\n      error_message: `Créneau non disponible. Créneaux possibles: ${CRENEAUX_AUTORISES.join(', ')}`,\n      timestamp: new Date().toISOString()\n    }\n  }];\n}\n\n// 5. Validation de la date (pas dans le passé, pas weekend, pas plus de 60 jours)\nconst dateSouhaitee = new Date(input.date_souhaitee);\nconst aujourdhui = new Date();\aujourdhui.setHours(0, 0, 0, 0);\n\nif (isNaN(dateSouhaitee.getTime())) {\n  return [{\n    json: {\n      valid: false,\n      error_code: 'VALIDATION_DATE_INVALID',\n      error_message: 'Format de date invalide (attendu: YYYY-MM-DD)',\n      timestamp: new Date().toISOString()\n    }\n  }];\n}\n\nif (dateSouhaitee < aujourdhui) {\n  return [{\n    json: {\n      valid: false,\n      error_code: 'VALIDATION_DATE_PAST',\n      error_message: 'Impossible de réserver dans le passé',\n      timestamp: new Date().toISOString()\n    }\n  }];\n}\n\nconst jourSemaine = dateSouhaitee.getDay();\nif (jourSemaine === 0 || jourSemaine === 6) {\n  return [{\n    json: {\n      valid: false,\n      error_code: 'VALIDATION_DATE_WEEKEND',\n      error_message: 'L\\'étude est fermée le weekend',\n      timestamp: new Date().toISOString()\n    }\n  }];\n}\n\nconst maxDate = new Date();\nmaxDate.setDate(maxDate.getDate() + 60);\nif (dateSouhaitee > maxDate) {\n  return [{\n    json: {\n      valid: false,\n      error_code: 'VALIDATION_DATE_TOO_FAR',\n      error_message: 'Réservation possible jusqu\\'à 60 jours à l\\'avance maximum',\n      timestamp: new Date().toISOString()\n    }\n  }];\n}\n\n// 6. Sanitization\nconst sanitize = (str) => {\n  if (!str) return '';\n  return str.toString().trim().replace(/<[^>]*>/g, '').replace(/[<>\"'&]/g, '');\n};\n\n// 7. Construire datetime pour Google Calendar\nconst [heures, minutes] = creneauSouhaite.split(':').map(Number);\nconst dateDebut = new Date(dateSouhaitee);\ndateDebut.setHours(heures, minutes, 0, 0);\n\nconst dateFin = new Date(dateDebut);\ndateFin.setMinutes(dateFin.getMinutes() + DUREE_RDV);\n\n// 8. Générer ID unique\nconst rdvId = `RDV-${Date.now()}-${Math.random().toString(36).substr(2, 9).toUpperCase()}`;\n\n// 9. Types d'actes valides\nconst typesActesValides = [\n  'achat_immobilier', 'vente_immobilier', 'donation', 'succession',\n  'testament', 'contrat_mariage', 'pacs', 'divorce', 'creation_sci',\n  'pret_hypothecaire', 'premier_contact', 'autre'\n];\nconst typeActe = sanitize(input.type_acte).toLowerCase().replace(/\\s+/g, '_');\nconst typeActeValide = typesActesValides.includes(typeActe) ? typeActe : 'autre';\n\n// 10. Formatage date FR pour affichage\nconst dateRdvFR = dateSouhaitee.toLocaleDateString('fr-FR', {\n  weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',\n  timeZone: 'Europe/Paris'\n});\n\nreturn [{\n  json: {\n    valid: true,\n    rdv_id: rdvId,\n    \n    // Données client\n    nom: sanitize(input.nom).toUpperCase(),\n    prenom: sanitize(input.prenom),\n    email: sanitize(input.email).toLowerCase(),\n    telephone: sanitize(input.telephone) || null,\n    \n    // Données RDV\n    type_acte: typeActeValide,\n    motif: sanitize(input.motif || '').substring(0, 500),\n    date_rdv: input.date_souhaitee,\n    creneau: creneauSouhaite,\n    duree_minutes: DUREE_RDV,\n    \n    // Pour Google Calendar (ISO 8601)\n    calendar_start: dateDebut.toISOString(),\n    calendar_end: dateFin.toISOString(),\n    \n    // Affichage FR\n    date_rdv_fr: dateRdvFR,\n    heure_rdv: creneauSouhaite,\n    \n    // RGPD\n    consentement_rgpd: true,\n    date_consentement: new Date().toISOString(),\n    rgpd_trace_id: rdvId,\n    \n    // Workflow context\n    workflow_context: {\n      workflow_name: 'notaire-appointment-booking-v1.0',\n      execution_id: $execution.id,\n      processed_at: new Date().toISOString()\n    }\n  }\n}];"
+      },
+      "id": "code-validation",
+      "name": "Validation Demande",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "condition-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-valid",
+      "name": "Demande Valide?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "resource": "event",
+        "operation": "getAll",
+        "calendar": { "value": "primary", "mode": "list" },
+        "returnAll": false,
+        "limit": 10,
+        "options": {
+          "timeMin": "={{ $json.calendar_start }}",
+          "timeMax": "={{ $json.calendar_end }}",
+          "singleEvents": true
+        }
+      },
+      "id": "calendar-check",
+      "name": "Vérifier Disponibilité",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.2,
+      "position": [920, 200],
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "google-calendar-credentials",
+          "name": "Google Calendar OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Vérifier si le créneau est libre\nconst events = $input.all();\nconst validationData = $('Validation Demande').first().json;\n\n// Si aucun événement sur ce créneau = disponible\nconst isAvailable = events.length === 0 || \n  (events.length === 1 && events[0].json && Object.keys(events[0].json).length === 0);\n\nreturn [{\n  json: {\n    ...validationData,\n    creneau_disponible: isAvailable,\n    conflits: isAvailable ? [] : events.map(e => e.json.summary || 'RDV existant')\n  }\n}];"
+      },
+      "id": "code-check-availability",
+      "name": "Analyser Disponibilité",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1140, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "condition-available",
+              "leftValue": "={{ $json.creneau_disponible }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-available",
+      "name": "Créneau Libre?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1360, 200]
+    },
+    {
+      "parameters": {
+        "resource": "event",
+        "operation": "create",
+        "calendar": { "value": "primary", "mode": "list" },
+        "start": "={{ $json.calendar_start }}",
+        "end": "={{ $json.calendar_end }}",
+        "additionalFields": {
+          "summary": "RDV Notaire - {{ $json.prenom }} {{ $json.nom }} ({{ $json.type_acte }})",
+          "description": "Rendez-vous pris en ligne\\n\\nClient: {{ $json.prenom }} {{ $json.nom }}\\nEmail: {{ $json.email }}\\nTéléphone: {{ $json.telephone }}\\nType d'acte: {{ $json.type_acte }}\\nMotif: {{ $json.motif }}\\n\\nRéférence: {{ $json.rdv_id }}\\nConsentement RGPD: {{ $json.date_consentement }}",
+          "attendees": ["={{ $json.email }}"],
+          "sendUpdates": "all",
+          "location": "Étude Notariale - [Adresse]"
+        }
+      },
+      "id": "calendar-create",
+      "name": "Créer RDV Calendar",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.2,
+      "position": [1580, 100],
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "google-calendar-credentials",
+          "name": "Google Calendar OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "create",
+        "databaseId": {
+          "__rl": true,
+          "value": "={{ $env.NOTION_DB_RDV_NOTAIRE }}",
+          "mode": "id"
+        },
+        "propertiesUi": {
+          "propertyValues": [
+            { "key": "RDV ID|rich_text", "textContent": "={{ $('Analyser Disponibilité').item.json.rdv_id }}" },
+            { "key": "Client|title", "textContent": "={{ $('Analyser Disponibilité').item.json.nom }} {{ $('Analyser Disponibilité').item.json.prenom }}" },
+            { "key": "Email|email", "emailValue": "={{ $('Analyser Disponibilité').item.json.email }}" },
+            { "key": "Téléphone|phone_number", "phoneValue": "={{ $('Analyser Disponibilité').item.json.telephone }}" },
+            { "key": "Date RDV|date", "dateValue": "={{ $('Analyser Disponibilité').item.json.calendar_start }}" },
+            { "key": "Type Acte|select", "selectValue": "={{ $('Analyser Disponibilité').item.json.type_acte }}" },
+            { "key": "Motif|rich_text", "textContent": "={{ $('Analyser Disponibilité').item.json.motif }}" },
+            { "key": "Statut|status", "statusValue": "Confirmé" },
+            { "key": "Google Event ID|rich_text", "textContent": "={{ $json.id }}" },
+            { "key": "Consentement RGPD|date", "dateValue": "={{ $('Analyser Disponibilité').item.json.date_consentement }}" },
+            { "key": "Source|select", "selectValue": "reservation_en_ligne" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "notion-create-rdv",
+      "name": "Enregistrer Notion",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [1800, 100],
+      "credentials": {
+        "notionApi": {
+          "id": "notion-credentials",
+          "name": "Notion API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Analyser Disponibilité').item.json.email }}",
+        "subject": "Confirmation de votre rendez-vous - Étude Notariale",
+        "emailType": "html",
+        "message": "<!DOCTYPE html>\n<html>\n<head>\n  <meta charset=\"UTF-8\">\n  <style>\n    body { font-family: Georgia, serif; color: #333; line-height: 1.6; }\n    .header { background: #1a365d; color: white; padding: 20px; text-align: center; }\n    .content { padding: 30px; max-width: 600px; margin: 0 auto; }\n    .rdv-box { background: #f8f9fa; border-left: 4px solid #1a365d; padding: 20px; margin: 20px 0; }\n    .footer { background: #f5f5f5; padding: 20px; font-size: 12px; color: #666; }\n    .rgpd { border-top: 1px solid #ddd; margin-top: 20px; padding-top: 15px; font-size: 11px; }\n    .btn { background: #1a365d; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; display: inline-block; margin: 10px 0; }\n  </style>\n</head>\n<body>\n  <div class=\"header\">\n    <h1>Rendez-vous Confirmé</h1>\n  </div>\n  <div class=\"content\">\n    <p>Bonjour {{ $('Analyser Disponibilité').item.json.prenom }},</p>\n    \n    <p>Votre rendez-vous à l'étude notariale est <strong>confirmé</strong>.</p>\n    \n    <div class=\"rdv-box\">\n      <p><strong>Date :</strong> {{ $('Analyser Disponibilité').item.json.date_rdv_fr }}</p>\n      <p><strong>Heure :</strong> {{ $('Analyser Disponibilité').item.json.heure_rdv }}</p>\n      <p><strong>Durée :</strong> {{ $('Analyser Disponibilité').item.json.duree_minutes }} minutes</p>\n      <p><strong>Objet :</strong> {{ $('Analyser Disponibilité').item.json.type_acte }}</p>\n      <p><strong>Lieu :</strong> Étude Notariale - [Adresse]</p>\n      <p><strong>Référence :</strong> {{ $('Analyser Disponibilité').item.json.rdv_id }}</p>\n    </div>\n    \n    <p><strong>Documents à apporter :</strong></p>\n    <ul>\n      <li>Pièce d'identité en cours de validité</li>\n      <li>Justificatif de domicile récent</li>\n      <li>Documents relatifs à votre dossier (si applicable)</li>\n    </ul>\n    \n    <p>Une invitation a également été envoyée sur votre calendrier.</p>\n    \n    <p><strong>Besoin de modifier ou annuler ?</strong><br>\n    Contactez-nous au moins 48h à l'avance par email ou téléphone.</p>\n    \n    <p>Cordialement,<br>\n    L'équipe de l'Étude Notariale</p>\n    \n    <div class=\"rgpd\">\n      <p><strong>Informations RGPD</strong></p>\n      <p>Vos données sont traitées pour la gestion de votre rendez-vous. Vous disposez des droits d'accès, rectification, effacement et opposition.</p>\n      <p>Contact DPO : <a href=\"mailto:rgpd@etude-notariale.fr\">rgpd@etude-notariale.fr</a></p>\n      <p>Référence traçabilité : {{ $('Analyser Disponibilité').item.json.rgpd_trace_id }}</p>\n    </div>\n  </div>\n  <div class=\"footer\">\n    <p>Cet email de confirmation a été envoyé automatiquement suite à votre réservation en ligne.</p>\n  </div>\n</body>\n</html>",
+        "options": {
+          "replyTo": "contact@etude-notariale.fr"
+        }
+      },
+      "id": "gmail-confirmation",
+      "name": "Email Confirmation",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [2020, 100],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "gmail-credentials",
+          "name": "Gmail OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": true,\n  \"message\": \"Votre rendez-vous est confirmé.\",\n  \"rdv\": {\n    \"reference\": \"{{ $('Analyser Disponibilité').item.json.rdv_id }}\",\n    \"date\": \"{{ $('Analyser Disponibilité').item.json.date_rdv_fr }}\",\n    \"heure\": \"{{ $('Analyser Disponibilité').item.json.heure_rdv }}\",\n    \"duree\": \"{{ $('Analyser Disponibilité').item.json.duree_minutes }} minutes\",\n    \"type_acte\": \"{{ $('Analyser Disponibilité').item.json.type_acte }}\"\n  },\n  \"rgpd\": {\n    \"consentement_enregistre\": true,\n    \"contact_dpo\": \"rgpd@etude-notariale.fr\"\n  }\n}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [{ "name": "Content-Type", "value": "application/json; charset=utf-8" }]
+          }
+        }
+      },
+      "id": "respond-success",
+      "name": "Réponse Succès",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2240, 100]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": false,\n  \"error\": \"Ce créneau n'est plus disponible.\",\n  \"code\": \"CRENEAU_INDISPONIBLE\",\n  \"suggestion\": \"Veuillez choisir un autre créneau ou une autre date.\",\n  \"date_demandee\": \"{{ $json.date_rdv_fr }}\",\n  \"creneau_demande\": \"{{ $json.creneau }}\"\n}",
+        "options": {
+          "responseCode": 409,
+          "responseHeaders": {
+            "entries": [{ "name": "Content-Type", "value": "application/json; charset=utf-8" }]
+          }
+        }
+      },
+      "id": "respond-unavailable",
+      "name": "Réponse Indisponible",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1580, 320]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "log-error",
+              "name": "log_validation_error",
+              "value": "={{ JSON.stringify({ action: 'BOOKING_VALIDATION_FAILED', error_code: $json.error_code, error_message: $json.error_message, timestamp: $json.timestamp, workflow: 'notaire-appointment-booking-v1.0', execution_id: $execution.id }) }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-error-log",
+      "name": "Log Erreur Validation",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [920, 420]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": false,\n  \"error\": \"{{ $('Validation Demande').item.json.error_message }}\",\n  \"code\": \"{{ $('Validation Demande').item.json.error_code }}\",\n  \"rgpd\": {\n    \"donnees_conservees\": false,\n    \"contact_dpo\": \"rgpd@etude-notariale.fr\"\n  }\n}",
+        "options": {
+          "responseCode": 400,
+          "responseHeaders": {
+            "entries": [{ "name": "Content-Type", "value": "application/json; charset=utf-8" }]
+          }
+        }
+      },
+      "id": "respond-validation-error",
+      "name": "Réponse Erreur Validation",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1140, 420]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "success-log",
+              "name": "log_success",
+              "value": "={{ JSON.stringify({ action: 'RDV_BOOKED', rdv_id: $('Analyser Disponibilité').item.json.rdv_id, calendar_event_id: $('Créer RDV Calendar').item.json.id, notion_page_id: $('Enregistrer Notion').item.json.id, email_sent: true, timestamp: new Date().toISOString(), workflow: 'notaire-appointment-booking-v1.0' }) }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-success-log",
+      "name": "Log Succès",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [2240, -20]
+    }
+  ],
+  "connections": {
+    "Webhook Demande RDV": {
+      "main": [[{ "node": "Validation Demande", "type": "main", "index": 0 }]]
+    },
+    "Validation Demande": {
+      "main": [[{ "node": "Demande Valide?", "type": "main", "index": 0 }]]
+    },
+    "Demande Valide?": {
+      "main": [
+        [{ "node": "Vérifier Disponibilité", "type": "main", "index": 0 }],
+        [{ "node": "Log Erreur Validation", "type": "main", "index": 0 }]
+      ]
+    },
+    "Vérifier Disponibilité": {
+      "main": [[{ "node": "Analyser Disponibilité", "type": "main", "index": 0 }]]
+    },
+    "Analyser Disponibilité": {
+      "main": [[{ "node": "Créneau Libre?", "type": "main", "index": 0 }]]
+    },
+    "Créneau Libre?": {
+      "main": [
+        [{ "node": "Créer RDV Calendar", "type": "main", "index": 0 }],
+        [{ "node": "Réponse Indisponible", "type": "main", "index": 0 }]
+      ]
+    },
+    "Créer RDV Calendar": {
+      "main": [[{ "node": "Enregistrer Notion", "type": "main", "index": 0 }]]
+    },
+    "Enregistrer Notion": {
+      "main": [[{ "node": "Email Confirmation", "type": "main", "index": 0 }]]
+    },
+    "Email Confirmation": {
+      "main": [
+        [{ "node": "Log Succès", "type": "main", "index": 0 }],
+        [{ "node": "Réponse Succès", "type": "main", "index": 0 }]
+      ]
+    },
+    "Log Erreur Validation": {
+      "main": [[{ "node": "Réponse Erreur Validation", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "staticData": null,
+  "tags": [
+    { "id": "tag-notaire", "name": "notaire" },
+    { "id": "tag-rgpd", "name": "rgpd" },
+    { "id": "tag-booking", "name": "booking" }
+  ],
+  "pinData": {},
+  "versionId": "1.0.0"
+}

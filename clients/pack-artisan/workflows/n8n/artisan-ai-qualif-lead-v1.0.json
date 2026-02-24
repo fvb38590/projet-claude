@@ -1,0 +1,307 @@
+{
+  "name": "artisan-ai-qualif-lead-v1.0",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "artisan-qualif-lead",
+        "options": {
+          "responseMode": "lastNode"
+        }
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Qualif Lead",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "artisan-qualif-lead"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// STEP 1 - Validation minimale + préparation prompt Anthropic\n// ============================================================\nconst input = $input.first().json;\n\nfunction sanitize(str) {\n  if (!str) return '';\n  return str.toString().trim().replace(/<[^>]*>/g, '').replace(/[<>\\\"'&]/g, '');\n}\n\nconst emailRegex = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;\nconst email = sanitize(input.email || '').toLowerCase();\nif (!email || !emailRegex.test(email)) {\n  return [{ json: { valid: false, error: 'EMAIL_INVALIDE', message: 'Email manquant ou invalide' } }];\n}\n\nconst nom = sanitize(input.nom || '').toUpperCase();\nconst prenom = sanitize(input.prenom || '');\nconst telephone = sanitize(input.telephone || '');\nconst adresseChantier = sanitize(input.adresse_chantier || '');\nconst codePostal = sanitize(input.code_postal || '');\nconst typeTravaux = sanitize(input.type_travaux || 'autre').toLowerCase();\nconst description = sanitize(input.description || '').substring(0, 1000);\nconst urgence = sanitize(input.urgence || 'normale');\nconst source = sanitize(input.source || 'site_web');\nconst budget = sanitize(input.budget || '');\nconst disponibilite = sanitize(input.disponibilite || '');\n\nconst leadId = 'LEAD-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9).toUpperCase();\n\nconst consentement = input.consentement_rgpd === true;\nconst dateSupp = new Date();\ndateSupp.setFullYear(dateSupp.getFullYear() + 3);\n\nconst prompt = 'Tu es un assistant de qualification de leads pour un artisan du bâtiment.\\n\\n'\n  + 'Analyse ce lead et attribue un score de 0 à 100 basé sur ces critères :\\n'\n  + '- Complétude des informations (nom, tel, adresse, description) : 0-25 pts\\n'\n  + '- Pertinence du type de travaux (travaux courants = plus de points) : 0-20 pts\\n'\n  + '- Urgence déclarée (très urgente=20, urgente=15, normale=5) : 0-20 pts\\n'\n  + '- Zone géographique (code postal renseigné = +10) : 0-10 pts\\n'\n  + '- Budget mentionné (oui = +10) : 0-10 pts\\n'\n  + '- Source (bouche à oreille=15, site_web=10, autre=5) : 0-15 pts\\n\\n'\n  + 'Données du lead :\\n'\n  + '- Nom: ' + nom + ' ' + prenom + '\\n'\n  + '- Email: ' + email + '\\n'\n  + '- Téléphone: ' + (telephone || 'NON RENSEIGNÉ') + '\\n'\n  + '- Adresse chantier: ' + (adresseChantier || 'NON RENSEIGNÉE') + '\\n'\n  + '- Code postal: ' + (codePostal || 'NON RENSEIGNÉ') + '\\n'\n  + '- Type travaux: ' + typeTravaux + '\\n'\n  + '- Description: ' + (description || 'AUCUNE') + '\\n'\n  + '- Urgence: ' + urgence + '\\n'\n  + '- Budget: ' + (budget || 'NON MENTIONNÉ') + '\\n'\n  + '- Disponibilité: ' + (disponibilite || 'NON PRÉCISÉE') + '\\n'\n  + '- Source: ' + source + '\\n\\n'\n  + 'Réponds UNIQUEMENT en JSON strict avec ce format :\\n'\n  + '{\"score\": <number 0-100>, \"niveau\": \"<HOT|WARM|COLD>\", \"raisons\": [\"raison1\", \"raison2\"], \"action_recommandee\": \"<texte court>\"}\\n'\n  + 'Pas de texte avant ni après le JSON.';\n\nreturn [{ json: {\n  valid: true,\n  lead_id: leadId,\n  nom: nom,\n  prenom: prenom,\n  email: email,\n  telephone: telephone,\n  adresse_chantier: adresseChantier,\n  code_postal: codePostal,\n  type_travaux: typeTravaux,\n  description: description,\n  urgence: urgence,\n  budget: budget,\n  disponibilite: disponibilite,\n  source: source,\n  consentement_rgpd: consentement,\n  date_consentement: new Date().toISOString(),\n  date_suppression_prevue: dateSupp.toISOString(),\n  prompt_ai: prompt,\n  timestamp: new Date().toISOString()\n} }];"
+      },
+      "id": "code-validation",
+      "name": "Validation RGPD",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "condition-valid",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-valid",
+      "name": "Données Valides?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "anthropicApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "anthropic-version", "value": "2023-06-01" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'claude-sonnet-4-5-20250929', max_tokens: 300, temperature: 0.1, messages: [{ role: 'user', content: $json.prompt_ai }] }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": false
+            }
+          }
+        }
+      },
+      "id": "anthropic-ai",
+      "name": "Anthropic AI Scoring",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [920, 200],
+      "credentials": {
+        "anthropicApi": {
+          "id": "anthropic-credentials",
+          "name": "Anthropic API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// STEP 2 - Parser réponse Anthropic et extraire score\n// ============================================================\nconst aiData = $('Anthropic AI Scoring').first().json;\nconst leadData = $('Validation RGPD').first().json;\n\nlet aiResponse = '';\nif (aiData.content && aiData.content[0]) {\n  aiResponse = aiData.content[0].text || '';\n} else if (typeof aiData === 'string') {\n  aiResponse = aiData;\n}\n\nlet score = 0;\nlet niveau = 'COLD';\nlet raisons = [];\nlet actionRecommandee = 'Vérification manuelle requise';\n\ntry {\n  const jsonMatch = aiResponse.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    const parsed = JSON.parse(jsonMatch[0]);\n    score = parseInt(parsed.score) || 0;\n    niveau = parsed.niveau || (score > 70 ? 'HOT' : score > 40 ? 'WARM' : 'COLD');\n    raisons = parsed.raisons || [];\n    actionRecommandee = parsed.action_recommandee || actionRecommandee;\n  }\n} catch (e) {\n  score = 50;\n  niveau = 'WARM';\n  raisons = ['Erreur parsing AI - qualification manuelle nécessaire'];\n}\n\nif (score < 0) score = 0;\nif (score > 100) score = 100;\n\nconst maskedEmail = leadData.email.replace(/(.{2}).*(@.*)/, '$1***$2');\nconsole.log(JSON.stringify({\n  step: 'ai_qualification',\n  status: 'success',\n  lead_id: leadData.lead_id,\n  email_masked: maskedEmail,\n  score: score,\n  niveau: niveau,\n  timestamp: new Date().toISOString()\n}));\n\nreturn [{ json: {\n  score: score,\n  niveau: niveau,\n  raisons: raisons,\n  action_recommandee: actionRecommandee,\n  is_qualified: score > 70,\n  ai_raw_response: aiResponse.substring(0, 500)\n} }];"
+      },
+      "id": "code-parser-ai",
+      "name": "Parser Score AI",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1160, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "condition-score",
+              "leftValue": "={{ $json.score }}",
+              "rightValue": 70,
+              "operator": { "type": "number", "operation": "gt" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-score",
+      "name": "Score > 70?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1380, 200]
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "create",
+        "databaseId": {
+          "__rl": true,
+          "value": "={{ $env.NOTION_DB_DEVIS_ARTISAN }}",
+          "mode": "id"
+        },
+        "propertiesUi": {
+          "propertyValues": [
+            { "key": "Client|title", "textContent": "={{ $('Validation RGPD').first().json.nom }} {{ $('Validation RGPD').first().json.prenom }}" },
+            { "key": "Lead ID|rich_text", "textContent": "={{ $('Validation RGPD').first().json.lead_id }}" },
+            { "key": "Email|email", "emailValue": "={{ $('Validation RGPD').first().json.email }}" },
+            { "key": "Téléphone|phone_number", "phoneValue": "={{ $('Validation RGPD').first().json.telephone }}" },
+            { "key": "Adresse Chantier|rich_text", "textContent": "={{ $('Validation RGPD').first().json.adresse_chantier }}" },
+            { "key": "Code Postal|rich_text", "textContent": "={{ $('Validation RGPD').first().json.code_postal }}" },
+            { "key": "Type Travaux|select", "selectValue": "={{ $('Validation RGPD').first().json.type_travaux }}" },
+            { "key": "Description|rich_text", "textContent": "={{ $('Validation RGPD').first().json.description }}" },
+            { "key": "Urgence|select", "selectValue": "={{ $('Validation RGPD').first().json.urgence }}" },
+            { "key": "Score Qualif|number", "numberValue": "={{ $('Parser Score AI').first().json.score }}" },
+            { "key": "Statut|status", "statusValue": "Nouveau" },
+            { "key": "Source|select", "selectValue": "={{ $('Validation RGPD').first().json.source }}" },
+            { "key": "Date Consentement RGPD|date", "dateValue": "={{ $('Validation RGPD').first().json.date_consentement }}" },
+            { "key": "Date Suppression Prévue|date", "dateValue": "={{ $('Validation RGPD').first().json.date_suppression_prevue }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "notion-create",
+      "name": "Créer Lead Notion",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [1620, 80],
+      "credentials": {
+        "notionApi": {
+          "id": "notion-credentials",
+          "name": "Notion API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log succès lead qualifié\nconst leadData = $('Validation RGPD').first().json;\nconst scoreData = $('Parser Score AI').first().json;\nconst notionData = $('Créer Lead Notion').first().json;\nconst maskedEmail = leadData.email.replace(/(.{2}).*(@.*)/, '$1***$2');\n\nreturn [{ json: {\n  success: true,\n  status: 'QUALIFIED',\n  lead_id: leadData.lead_id,\n  score: scoreData.score,\n  niveau: scoreData.niveau,\n  action: 'NOTION_CREATED',\n  notion_page_id: notionData.id || null,\n  email_masked: maskedEmail,\n  raisons: scoreData.raisons,\n  action_recommandee: scoreData.action_recommandee,\n  message: 'Lead qualifié (score ' + scoreData.score + '/100) - ajouté dans Notion Devis & Leads',\n  timestamp: new Date().toISOString(),\n  workflow: 'artisan-ai-qualif-lead-v1.0'\n} }];"
+      },
+      "id": "code-log-qualifie",
+      "name": "Log Succès Qualifié",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1860, 80]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $env.GOOGLE_SHEET_LEADS_LOW_SCORE }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads Low Score",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Lead ID": "={{ $('Validation RGPD').first().json.lead_id }}",
+            "Client": "={{ $('Validation RGPD').first().json.nom }} {{ $('Validation RGPD').first().json.prenom }}",
+            "Email": "={{ $('Validation RGPD').first().json.email }}",
+            "Téléphone": "={{ $('Validation RGPD').first().json.telephone }}",
+            "Type Travaux": "={{ $('Validation RGPD').first().json.type_travaux }}",
+            "Adresse Chantier": "={{ $('Validation RGPD').first().json.adresse_chantier }}",
+            "Code Postal": "={{ $('Validation RGPD').first().json.code_postal }}",
+            "Urgence": "={{ $('Validation RGPD').first().json.urgence }}",
+            "Source": "={{ $('Validation RGPD').first().json.source }}",
+            "Score": "={{ $('Parser Score AI').first().json.score }}",
+            "Niveau": "={{ $('Parser Score AI').first().json.niveau }}",
+            "Action Recommandée": "={{ $('Parser Score AI').first().json.action_recommandee }}",
+            "Date": "={{ $('Validation RGPD').first().json.timestamp }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "gsheets-low-score",
+      "name": "Google Sheets Low Score",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1620, 380],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "gsheets-credentials",
+          "name": "Google Sheets OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "channel": {
+          "__rl": true,
+          "value": "={{ $env.SLACK_CHANNEL_LEADS_LOW }}",
+          "mode": "id"
+        },
+        "text": "=:warning: *Lead basse qualif détecté*\n\n*Score :* {{ $('Parser Score AI').first().json.score }}/100 ({{ $('Parser Score AI').first().json.niveau }})\n*Lead ID :* {{ $('Validation RGPD').first().json.lead_id }}\n*Client :* {{ $('Validation RGPD').first().json.nom }} {{ $('Validation RGPD').first().json.prenom }}\n*Type travaux :* {{ $('Validation RGPD').first().json.type_travaux }}\n*Urgence :* {{ $('Validation RGPD').first().json.urgence }}\n*Source :* {{ $('Validation RGPD').first().json.source }}\n\n*Action recommandée :* {{ $('Parser Score AI').first().json.action_recommandee }}\n*Raisons :* {{ $('Parser Score AI').first().json.raisons.join(', ') }}\n\n_Lead ajouté dans Google Sheets pour suivi._",
+        "otherOptions": {}
+      },
+      "id": "slack-notif",
+      "name": "Slack Notif Low Score",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [1860, 380],
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "slack-credentials",
+          "name": "Slack OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log succès lead low score\nconst leadData = $('Validation RGPD').first().json;\nconst scoreData = $('Parser Score AI').first().json;\nconst maskedEmail = leadData.email.replace(/(.{2}).*(@.*)/, '$1***$2');\n\nreturn [{ json: {\n  success: true,\n  status: 'LOW_SCORE',\n  lead_id: leadData.lead_id,\n  score: scoreData.score,\n  niveau: scoreData.niveau,\n  actions: ['GOOGLE_SHEETS_UPDATED', 'SLACK_NOTIFIED'],\n  email_masked: maskedEmail,\n  action_recommandee: scoreData.action_recommandee,\n  message: 'Lead non qualifié (score ' + scoreData.score + '/100) - ajouté en Sheets + Slack notifié',\n  timestamp: new Date().toISOString(),\n  workflow: 'artisan-ai-qualif-lead-v1.0'\n} }];"
+      },
+      "id": "code-log-low",
+      "name": "Log Succès Low Score",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2100, 380]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Réponse erreur validation\nconst data = $input.first().json;\n\nreturn [{ json: {\n  success: false,\n  error: data.error,\n  message: data.message,\n  timestamp: new Date().toISOString(),\n  workflow: 'artisan-ai-qualif-lead-v1.0'\n} }];"
+      },
+      "id": "code-erreur-validation",
+      "name": "Réponse Erreur Validation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [920, 450]
+    }
+  ],
+  "connections": {
+    "Webhook Qualif Lead": {
+      "main": [[{ "node": "Validation RGPD", "type": "main", "index": 0 }]]
+    },
+    "Validation RGPD": {
+      "main": [[{ "node": "Données Valides?", "type": "main", "index": 0 }]]
+    },
+    "Données Valides?": {
+      "main": [
+        [{ "node": "Anthropic AI Scoring", "type": "main", "index": 0 }],
+        [{ "node": "Réponse Erreur Validation", "type": "main", "index": 0 }]
+      ]
+    },
+    "Anthropic AI Scoring": {
+      "main": [[{ "node": "Parser Score AI", "type": "main", "index": 0 }]]
+    },
+    "Parser Score AI": {
+      "main": [[{ "node": "Score > 70?", "type": "main", "index": 0 }]]
+    },
+    "Score > 70?": {
+      "main": [
+        [{ "node": "Créer Lead Notion", "type": "main", "index": 0 }],
+        [{ "node": "Google Sheets Low Score", "type": "main", "index": 0 }]
+      ]
+    },
+    "Créer Lead Notion": {
+      "main": [[{ "node": "Log Succès Qualifié", "type": "main", "index": 0 }]]
+    },
+    "Google Sheets Low Score": {
+      "main": [[{ "node": "Slack Notif Low Score", "type": "main", "index": 0 }]]
+    },
+    "Slack Notif Low Score": {
+      "main": [[{ "node": "Log Succès Low Score", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "staticData": null,
+  "tags": [
+    { "id": "tag-artisan", "name": "artisan" },
+    { "id": "tag-rgpd", "name": "rgpd" },
+    { "id": "tag-ai", "name": "ai-qualification" }
+  ],
+  "pinData": {},
+  "versionId": "1.0.0"
+}
