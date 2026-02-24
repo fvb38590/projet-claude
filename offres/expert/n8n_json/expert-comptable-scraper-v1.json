@@ -1,0 +1,49 @@
+{
+  "name": "Expert-Comptable - Scraping & Injection",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{"field": "hours", "hoursInterval": 1}]
+        }
+      },
+      "id": "scheduler",
+      "name": "Cron (1h)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "command": "python3 offres/expert/python_scripts/scraper_comptables.py"
+      },
+      "id": "python_scraper",
+      "name": "Exécuter Scraper",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "tableId": " prospects",
+        "columns": {
+          "columnValues": [
+            {"columnName": "nom", "value": "{{ $json.nom }}"},
+            {"columnName": "email", "value": "{{ $json.email }}"},
+            {"columnName": "source", "value": "scraper"}
+          ]
+        }
+      },
+      "id": "airtable",
+      "name": "Sauvegarder dans Airtable",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 3,
+      "position": [650, 300]
+    }
+  ],
+  "connections": {
+    "Cron (1h)": {"main": [[{"node": "Exécuter Scraper", "type": "main", "index": 0}]]},
+    "Exécuter Scraper": {"main": [[{"node": "Sauvegarder dans Airtable", "type": "main", "index": 0}]]}
+  }
+}

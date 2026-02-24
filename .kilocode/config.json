@@ -1,0 +1,10 @@
+{
+    "project": {
+        "id": "vazbolota-automation-hub",
+        "name": "Market Research & Scraping"
+    },
+    "settings": {
+        "preferred_provider": "groq",
+        "fallback_provider": "glama"
+    }
+}

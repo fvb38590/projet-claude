@@ -1,0 +1,67 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{"field": "minutes", "minutesInterval": 15}]
+        }
+      },
+      "name": "Check Forms (15min)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api.typeform.com/forms/{{$credentials.formId}}/responses",
+        "options": {}
+      },
+      "name": "Fetch Typeform",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "command": "python3 offres/artisan/python_scripts/clean_data.py",
+        "inputData": "={{ $json }}"
+      },
+      "name": "Clean Data",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "resource": "contact",
+        "email": "={{ $json.email }}",
+        "firstName": "={{ $json.nom }}",
+        "phone": "={{ $json.tel }}"
+      },
+      "name": "Create HubSpot Contact",
+      "type": "n8n-nodes-base.hubspot",
+      "typeVersion": 2,
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "fromEmail": "automat@vazbolotaconsulting.fr",
+        "toEmail": "={{ $json.email }}",
+        "subject": "Merci pour votre demande - Devis gratuit",
+        "text": "Bonjour {{ $json.nom }},\n\nNous avons bien reçu votre demande. Un artisan vous contactera sous 24h.\n\nCordialement,\nL'équipe Vaz Bolota",
+        "options": {}
+      },
+      "name": "Confirmation Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 1,
+      "position": [1050, 300]
+    }
+  ],
+  "connections": {
+    "Check Forms (15min)": {"main": [[{"node": "Fetch Typeform", "type": "main", "index": 0}]]},
+    "Fetch Typeform": {"main": [[{"node": "Clean Data", "type": "main", "index": 0}]]},
+    "Clean Data": {"main": [[{"node": "Create HubSpot Contact", "type": "main", "index": 0}]]},
+    "Create HubSpot Contact": {"main": [[{"node": "Confirmation Email", "type": "main", "index": 0}]]}
+  }
+}

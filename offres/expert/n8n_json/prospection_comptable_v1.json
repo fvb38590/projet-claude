@@ -1,0 +1,39 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "command": "python3 /root/votre-projet/offres/expert/python_scripts/scraper_comptables.py"
+      },
+      "name": "Execute Scraper",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "fromEmail": "automat@vazbolotaconsulting.fr",
+        "toEmail": "={{ \$node[\"Execute Scraper\"].json[\"email\"] }}",
+        "subject": "Optimisation de vos flux de documents - Cabinet {{ \$node[\"Execute Scraper\"].json[\"nom\"] }}",
+        "text": "Bonjour,\n\nNous avons remarqué votre expertise... (etc.)",
+        "options": {}
+      },
+      "name": "Send OVH Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 1,
+      "position": [500, 300]
+    }
+  ],
+  "connections": {
+    "Execute Scraper": {
+      "main": [
+        [
+          {
+            "node": "Send OVH Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

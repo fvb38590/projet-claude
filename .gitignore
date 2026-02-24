@@ -1,6 +1,9 @@
 node_modules/
 *.log
 .env
+brain/
+__pycache__/
+*.pyc
 .DS_Store
 blueprints/**/*.csv
 leads_*.csv
